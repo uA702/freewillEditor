@@ -1,3 +1,4 @@
 opencv-python
 numpy
-pillow
+pyside6
+moviepy

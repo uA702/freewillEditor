@@ -14,7 +14,7 @@ class VideoEditorApp(QMainWindow):
     def __init__(self, registry):
         super().__init__()
         self.setWindowTitle("Freewill Editor Pipeline Framework")
-        self.setGeometry(100, 100, 1200, 670) # Widened window frame slightly
+        self.setGeometry(100, 100, 1200, 670)
         
         self.registry = registry
         self.worker = VideoWorker(self.registry)
@@ -28,31 +28,37 @@ class VideoEditorApp(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # --- 1. Top File Routing Bar (RESTORED EXPORT UI) ---
+        # --- 1. Top File Routing Bar (RESTORED EXPORT UI + LIVE CAM TOGGLE) ---
         top_group = QGroupBox("Routing Options")
         top_layout = QHBoxLayout(top_group)
         
         self.txt_input = QLineEdit()
         self.txt_input.setPlaceholderText("Select raw input file...")
-        btn_browse_in = QPushButton("Browse Input")
-        btn_browse_in.clicked.connect(self.browse_input)
+        self.btn_browse_in = QPushButton("Browse Input")
+        self.btn_browse_in.clicked.connect(self.browse_input)
+
+        # NEW: Live Camera Toggle Checkbox
+        self.chk_live = QCheckBox("Use Live Camera (Device 0)")
+        self.chk_live.setStyleSheet("font-weight: bold; color: #00E676;")
+        self.chk_live.stateChanged.connect(self.toggle_live_mode)
 
         self.txt_output = QLineEdit()
         self.txt_output.setPlaceholderText("Select export file target destination...")
-        btn_browse_out = QPushButton("Browse Output")
-        btn_browse_out.clicked.connect(self.browse_output)
+        self.btn_browse_out = QPushButton("Browse Output")
+        self.btn_browse_out.clicked.connect(self.browse_output)
 
-        btn_export = QPushButton("Export Video")
-        btn_export.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
-        btn_export.clicked.connect(self.start_export)
+        self.btn_export = QPushButton("Export Video")
+        self.btn_export.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
+        self.btn_export.clicked.connect(self.start_export)
 
         top_layout.addWidget(QLabel("Input:"))
         top_layout.addWidget(self.txt_input)
-        top_layout.addWidget(btn_browse_in)
+        top_layout.addWidget(self.btn_browse_in)
+        top_layout.addWidget(self.chk_live) # Add live checkbox between input and output routing
         top_layout.addWidget(QLabel("Output:"))
         top_layout.addWidget(self.txt_output)
-        top_layout.addWidget(btn_browse_out)
-        top_layout.addWidget(btn_export)
+        top_layout.addWidget(self.btn_browse_out)
+        top_layout.addWidget(self.btn_export)
         main_layout.addWidget(top_group)
 
         body_layout = QHBoxLayout()
@@ -60,7 +66,7 @@ class VideoEditorApp(QMainWindow):
         # --- 2. Left Dynamic Controls Container ---
         self.controls_box = QGroupBox("Pipeline Variables")
         self.controls_layout = QVBoxLayout(self.controls_box)
-        self.controls_box.setFixedWidth(360) # Expanded to 360px for slider row layout components
+        self.controls_box.setFixedWidth(360)
         
         self.controls_layout.addWidget(QLabel("Select Active Execution Stage:"))
         self.combo_stages = QComboBox()
@@ -86,7 +92,7 @@ class VideoEditorApp(QMainWindow):
 
         # --- 3. Center Screen Viewport ---
         screen_layout = QVBoxLayout()
-        self.lbl_video = QLabel("Load a video file to begin processing paths...")
+        self.lbl_video = QLabel("Load a video file or enable live camera to begin processing...")
         self.lbl_video.setAlignment(Qt.AlignCenter)
         self.lbl_video.setStyleSheet("background-color: #121212; border-radius: 4px; border: 2px solid #333;")
         screen_layout.addWidget(self.lbl_video, stretch=1)
@@ -107,6 +113,28 @@ class VideoEditorApp(QMainWindow):
         main_layout.addLayout(body_layout)
 
         self.generate_effect_sliders()
+
+    def toggle_live_mode(self, state):
+        """Toggles between static disk video routing and dynamic live input device streaming."""
+        is_live = (state == 2)
+        
+        # Disable file inputs and exports if live mode is active
+        self.txt_input.setEnabled(not is_live)
+        self.btn_browse_in.setEnabled(not is_live)
+        self.btn_browse_out.setEnabled(not is_live)
+        self.btn_export.setEnabled(not is_live)
+        
+        if self.worker.isRunning():
+            self.worker.stop()
+            self.btn_play.setText("Play")
+
+        if is_live:
+            self.txt_input.setText("LIVE DEVICE STREAM ACTIVE (0)")
+            self.worker.load_video(0) # Pass integer 0 to open native default webcam hardware channel
+        else:
+            self.txt_input.clear()
+            self.lbl_video.setPixmap(QPixmap())
+            self.lbl_video.setText("Load a video file or enable live camera to begin processing...")
 
     def on_stage_changed(self, target_node_name):
         """Changes the root endpoint node target of our rendering tree."""
@@ -208,18 +236,15 @@ class VideoEditorApp(QMainWindow):
                     lbl_val.setFixedWidth(35)
                     lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     
-                    # 1. Reset Button [R]
                     btn_override = QPushButton("R")
                     btn_override.setFixedSize(22, 22)
                     btn_override.setStyleSheet("font-weight: bold; color: #D32F2F; background-color: #222; border: 1px solid #444;")
                     layer_default = meta.get("default", meta["min"])
                     btn_override.clicked.connect(lambda checked=False, s=slider, d=layer_default: s.setValue(d))
                     
-                    # 2. Chaos/Clipping Overflow Trigger Button [!]
                     btn_chaos = QPushButton("!")
                     btn_chaos.setFixedSize(22, 22)
                     
-                    # Initialize stylesheet color rules based on layer property status on render
                     if getattr(layer, "clipping_disabled", False):
                         btn_chaos.setStyleSheet("font-weight: bold; color: #FFF; background-color: #E65100; border: 1px solid #FF9800;")
                         btn_chaos.setToolTip("OVERFLOW ACTIVE: Safeguards disabled! Expect native array overflows.")
@@ -249,6 +274,10 @@ class VideoEditorApp(QMainWindow):
         self.sliders_layout.addStretch()
 
     def browse_input(self):
+        # Guard: block browsing if live camera mode is on
+        if self.chk_live.isChecked():
+            return
+            
         path, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Videos (*.mp4 *.avi *.mkv *.mov)")
         if path:
             self.txt_input.setText(path)
@@ -266,8 +295,10 @@ class VideoEditorApp(QMainWindow):
         self.lbl_video.setPixmap(scaled_pixmap)
 
     def toggle_play(self):
-        if not self.txt_input.text(): 
+        # If not live mode, check that we have an active input path
+        if not self.chk_live.isChecked() and not self.txt_input.text(): 
             return
+            
         if self.worker.isRunning():
             self.worker.stop()
             self.btn_play.setText("Play")
@@ -276,13 +307,21 @@ class VideoEditorApp(QMainWindow):
             self.worker.start()
 
     def restart_video(self):
+        # Don't restart live webcams
+        if self.chk_live.isChecked():
+            return
         self.worker.restart()
 
     def on_video_ended(self):
         self.btn_play.setText("Play")
-        QMessageBox.information(self, "Playback Complete", "Video playback loop finished.")
+        if not self.chk_live.isChecked():
+            QMessageBox.information(self, "Playback Complete", "Video playback loop finished.")
 
     def start_export(self):
+        if self.chk_live.isChecked():
+            QMessageBox.warning(self, "Live Active", "Cannot execute offline render exports while streaming live hardware inputs.")
+            return
+            
         if not self.txt_input.text() or not self.txt_output.text():
             QMessageBox.warning(self, "Paths Missing", "Please select file routes before attempting export workflows.")
             return

@@ -348,10 +348,11 @@ class LocalEchoEffect(BaseEffect):
 class LocalTemporalBlurEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": False, "blend_history": 40}
+        self.parameters = {"enabled": False, 
+                           "blend_history": 50}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "blend_history": {"type": "int", "default": 40, "min": 0, "max": 100}
+            "blend_history": {"type": "int", "default": 50, "min": 0, "max": 100}
         }
         self.accumulator = None
 
