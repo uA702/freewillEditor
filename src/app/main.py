@@ -14,7 +14,7 @@ class VideoEditorApp(QMainWindow):
     def __init__(self, registry):
         super().__init__()
         self.setWindowTitle("Freewill Editor Pipeline Framework")
-        self.setGeometry(100, 100, 1150, 670)
+        self.setGeometry(100, 100, 1200, 670) # Widened window frame slightly
         
         self.registry = registry
         self.worker = VideoWorker(self.registry)
@@ -60,7 +60,7 @@ class VideoEditorApp(QMainWindow):
         # --- 2. Left Dynamic Controls Container ---
         self.controls_box = QGroupBox("Pipeline Variables")
         self.controls_layout = QVBoxLayout(self.controls_box)
-        self.controls_box.setFixedWidth(290)
+        self.controls_box.setFixedWidth(360) # Expanded to 360px for slider row layout components
         
         self.controls_layout.addWidget(QLabel("Select Active Execution Stage:"))
         self.combo_stages = QComboBox()
@@ -68,7 +68,6 @@ class VideoEditorApp(QMainWindow):
         self.combo_stages.currentTextChanged.connect(self.on_stage_changed)
         self.controls_layout.addWidget(self.combo_stages)
         
-        # FIX: Implement a Scroll Area wrapper to make the dynamic slider container scrollable
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -81,7 +80,7 @@ class VideoEditorApp(QMainWindow):
         self.sliders_layout.setContentsMargins(5, 5, 5, 5)
         
         scroll_area.setWidget(self.sliders_container)
-        self.controls_layout.addWidget(scroll_area) # Put the scroll area into the sidebar container
+        self.controls_layout.addWidget(scroll_area)
         
         body_layout.addWidget(self.controls_box)
 
@@ -114,43 +113,42 @@ class VideoEditorApp(QMainWindow):
         self.registry.set_output_node(target_node_name)
         self.generate_effect_sliders()
 
-    def _collect_active_stages(self, stage_name: str, active_set: set):
-        """Recursively trace backward through the graph to find active nodes."""
-        if not stage_name or stage_name in active_set:
-            return
-        active_set.add(stage_name)
-        stage = self.registry.stages.get(stage_name)
-        if stage:
-            for input_dep in stage.inputs:
-                self._collect_active_stages(input_dep, active_set)
+    def toggle_clipping_override(self, layer, button):
+        """Toggles the mathematical clip safeguard of a core matrix layer layer."""
+        layer.clipping_disabled = not layer.clipping_disabled
+        if layer.clipping_disabled:
+            button.setStyleSheet("font-weight: bold; color: #FFF; background-color: #E65100; border: 1px solid #FF9800;")
+            button.setToolTip("OVERFLOW ACTIVE: Safeguards disabled! Expect native array overflows.")
+        else:
+            button.setStyleSheet("font-weight: bold; color: #777; background-color: #222; border: 1px solid #444;")
+            button.setToolTip("Safeguards Active: Hardware matrix securely clamped (0-255).")
 
     def generate_effect_sliders(self):
-        """Cleans and builds parameters ONLY for the single selected stage node."""
-        # 1. Clear old slider widgets from the layout
+        """Cleans and builds parameters with value labels, resets, and chaos overrides."""
         while self.sliders_layout.count():
             item = self.sliders_layout.takeAt(0)
             widget = item.widget()
-            if widget: widget.deleteLater()
+            if widget: 
+                widget.deleteLater()
 
         current_stage_name = self.combo_stages.currentText()
         if not current_stage_name: 
             return
         
-        # 2. Extract ONLY the specifically selected stage instance
         stage = self.registry.stages.get(current_stage_name)
         if not stage: 
             return
 
-        # Draw Node Header
         lbl_stage = QLabel(f"STAGE: {current_stage_name}")
         lbl_stage.setStyleSheet("color: #00C000; font-weight: bold; margin-top: 12px; font-size: 11pt;")
         self.sliders_layout.addWidget(lbl_stage)
 
-        # --- PART A: Selected Node Properties (e.g., Mixer crossfades / volume sliders) ---
+        # --- PART A: Selected Node Properties (e.g., Mixer Master Faders) ---
         if stage.parameters_metadata:
             for param, meta in stage.parameters_metadata.items():
                 if meta.get("type") == "int":
-                    self.sliders_layout.addWidget(QLabel(f"   [Mix Slider] {param}:"))
+                    clean_param_name = param.replace("volume_", "")
+                    self.sliders_layout.addWidget(QLabel(f"   [Mixer] {clean_param_name}:"))
                     
                     row_widget = QWidget()
                     row_layout = QHBoxLayout(row_widget)
@@ -161,16 +159,25 @@ class VideoEditorApp(QMainWindow):
                     slider.setValue(stage.parameters[param])
                     
                     lbl_val = QLabel(str(stage.parameters[param]))
-                    lbl_val.setFixedWidth(30)
+                    lbl_val.setFixedWidth(35)
                     lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    
+                    btn_override = QPushButton("R")
+                    btn_override.setFixedSize(22, 22)
+                    btn_override.setToolTip("Reset to default layout value")
+                    btn_override.setStyleSheet("font-weight: bold; color: #D32F2F; background-color: #222; border: 1px solid #444;")
+                    
+                    default_val = meta.get("default", meta["min"])
                     
                     slider.valueChanged.connect(lambda val, s=stage, p=param, l=lbl_val: [
                         s.set_parameter(p, val),
                         l.setText(str(val))
                     ])
+                    btn_override.clicked.connect(lambda checked=False, s=slider, d=default_val: s.setValue(d))
                     
                     row_layout.addWidget(slider)
                     row_layout.addWidget(lbl_val)
+                    row_layout.addWidget(btn_override)
                     self.sliders_layout.addWidget(row_widget)
                     
                 elif meta.get("type") == "bool":
@@ -198,10 +205,30 @@ class VideoEditorApp(QMainWindow):
                     slider.setValue(layer.parameters[param])
                     
                     lbl_val = QLabel(str(layer.parameters[param]))
-                    lbl_val.setFixedWidth(30)
+                    lbl_val.setFixedWidth(35)
                     lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     
-                    # FIXED: Typo corrected from l.set_paarameter() to l.set_parameter()
+                    # 1. Reset Button [R]
+                    btn_override = QPushButton("R")
+                    btn_override.setFixedSize(22, 22)
+                    btn_override.setStyleSheet("font-weight: bold; color: #D32F2F; background-color: #222; border: 1px solid #444;")
+                    layer_default = meta.get("default", meta["min"])
+                    btn_override.clicked.connect(lambda checked=False, s=slider, d=layer_default: s.setValue(d))
+                    
+                    # 2. Chaos/Clipping Overflow Trigger Button [!]
+                    btn_chaos = QPushButton("!")
+                    btn_chaos.setFixedSize(22, 22)
+                    
+                    # Initialize stylesheet color rules based on layer property status on render
+                    if getattr(layer, "clipping_disabled", False):
+                        btn_chaos.setStyleSheet("font-weight: bold; color: #FFF; background-color: #E65100; border: 1px solid #FF9800;")
+                        btn_chaos.setToolTip("OVERFLOW ACTIVE: Safeguards disabled! Expect native array overflows.")
+                    else:
+                        btn_chaos.setStyleSheet("font-weight: bold; color: #777; background-color: #222; border: 1px solid #444;")
+                        btn_chaos.setToolTip("Safeguards Active: Hardware matrix securely clamped (0-255).")
+                    
+                    btn_chaos.clicked.connect(lambda checked=False, l=layer, b=btn_chaos: self.toggle_clipping_override(l, b))
+                    
                     slider.valueChanged.connect(lambda val, l=layer, p=param, lv=lbl_val: [
                         l.set_parameter(p, val),
                         lv.setText(str(val))
@@ -209,12 +236,13 @@ class VideoEditorApp(QMainWindow):
                     
                     row_layout.addWidget(slider)
                     row_layout.addWidget(lbl_val)
+                    row_layout.addWidget(btn_override)
+                    row_layout.addWidget(btn_chaos)
                     self.sliders_layout.addWidget(row_widget)
                     
                 elif meta.get("type") == "bool":
                     checkbox = QCheckBox(f"      Enable {param}")
                     checkbox.setChecked(layer.parameters[param])
-                    # FIXED: Typo corrected from l.set_paarameter() to l.set_parameter()
                     checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_parameter(p, state == 2))
                     self.sliders_layout.addWidget(checkbox)
         

@@ -6,6 +6,7 @@ class BaseEffect:
     def __init__(self):
         self.parameters = {}
         self.parameters_metadata = {}
+        self.clipping_disabled = False  # Global chaos switch for integer rollover glitches
 
     def set_parameter(self, name: str, value):
         """Standardized method to update parameter fields from the UI."""
@@ -18,7 +19,7 @@ class BaseEffect:
 
 
 # =====================================================================
-# 1. NATIVELY NEUTRALIZABLE EFFECTS (No explicit toggle needed)
+# 1. NATIVELY NEUTRALIZABLE EFFECTS (With clipping override support)
 # =====================================================================
 
 class BrightnessEffect(BaseEffect):
@@ -31,8 +32,12 @@ class BrightnessEffect(BaseEffect):
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         factor = self.parameters["brightness"] / 100.0
-        if factor == 1.0:
+        if factor == 1.0 and not self.clipping_disabled:
             return frame
+        
+        # If clipping is disabled, bypass native clamping loops to force integer wrap art
+        if self.clipping_disabled:
+            return (frame * factor).astype(np.uint8)
         return np.clip(frame * factor, 0, 255).astype(np.uint8)
 
 
@@ -46,10 +51,15 @@ class ContrastEffect(BaseEffect):
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         factor = self.parameters["contrast"] / 100.0
-        if factor == 1.0:
+        if factor == 1.0 and not self.clipping_disabled:
             return frame
+            
         mean = np.mean(frame, axis=(0, 1), keepdims=True)
-        return np.clip(mean + (frame - mean) * factor, 0, 255).astype(np.uint8)
+        raw_res = mean + (frame - mean) * factor
+        
+        if self.clipping_disabled:
+            return raw_res.astype(np.uint8)
+        return np.clip(raw_res, 0, 255).astype(np.uint8)
 
 
 class SaturationEffect(BaseEffect):
@@ -62,10 +72,17 @@ class SaturationEffect(BaseEffect):
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         factor = self.parameters["saturation"] / 100.0
-        if factor == 1.0:
+        if factor == 1.0 and not self.clipping_disabled:
             return frame
+            
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[:, :, 1] *= factor
+        
+        if self.clipping_disabled:
+            # Mask out bits past 255 to create sudden neon saturation bands
+            hsv_out = (hsv.astype(np.int32) & 0xFF).astype(np.uint8)
+            return cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
+            
         hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
         return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
@@ -80,8 +97,9 @@ class ColorTempEffect(BaseEffect):
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         temp = self.parameters["temperature"]
-        if temp == 0:
+        if temp == 0 and not self.clipping_disabled:
             return frame
+            
         res = frame.astype(np.int16)
         if temp > 0:
             res[:, :, 2] += temp  # Warm up (Add to Red)
@@ -89,6 +107,9 @@ class ColorTempEffect(BaseEffect):
         else:
             res[:, :, 0] -= temp  # Cool down (Add to Blue)
             res[:, :, 2] += temp // 2 # Sub from Red
+            
+        if self.clipping_disabled:
+            return res.astype(np.uint8)
         return np.clip(res, 0, 255).astype(np.uint8)
 
 
@@ -102,9 +123,13 @@ class AddEffect(BaseEffect):
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         val = self.parameters["value"]
-        if val == 0:
+        if val == 0 and not self.clipping_disabled:
             return frame
-        return np.clip(frame.astype(np.int16) + val, 0, 255).astype(np.uint8)
+            
+        res = frame.astype(np.int16) + val
+        if self.clipping_disabled:
+            return res.astype(np.uint8)
+        return np.clip(res, 0, 255).astype(np.uint8)
 
 
 # =====================================================================
@@ -214,7 +239,6 @@ class ColorMappingEffect(BaseEffect):
 
 
 class LocalBlurEffect(BaseEffect):
-    """Upgraded with independent X and Y directional blurring adjustments."""
     def __init__(self):
         super().__init__()
         self.parameters = {"enabled": False, "kernel_x": 5, "kernel_y": 5}
@@ -234,13 +258,11 @@ class LocalBlurEffect(BaseEffect):
         if kx <= 1 and ky <= 1:
             return frame
             
-        # Standardize kernel sizes to odd integers required by OpenCV
         if kx > 1 and kx % 2 == 0: 
             kx += 1
         if ky > 1 and ky % 2 == 0: 
             ky += 1
         
-        # Enforce minimum size boundary rule
         kx = max(1, kx)
         ky = max(1, ky)
         
@@ -248,7 +270,6 @@ class LocalBlurEffect(BaseEffect):
 
 
 class ROIEffect(BaseEffect):
-    """Region of Interest (ROI) modifier stage to window-crop paths via 0-100% dimensions."""
     def __init__(self):
         super().__init__()
         self.parameters = {
@@ -272,11 +293,9 @@ class ROIEffect(BaseEffect):
             
         h, w, c = frame.shape
         
-        # Convert percent sliders safely into concrete pixel markers
         t_pct, b_pct = self.parameters["top"], self.parameters["bottom"]
         l_pct, r_pct = self.parameters["left"], self.parameters["right"]
         
-        # Guard constraints to make sure bounding boxes don't flip inverted
         if t_pct >= b_pct: 
             b_pct = min(100, t_pct + 1)
         if l_pct >= r_pct: 
@@ -287,7 +306,6 @@ class ROIEffect(BaseEffect):
         x1 = int((l_pct / 100.0) * w)
         x2 = int((r_pct / 100.0) * w)
         
-        # Slice target canvas array and zero-pad the margin blocks
         cropped = frame[y1:y2, x1:x2]
         output_canvas = np.zeros_like(frame)
         output_canvas[y1:y2, x1:x2] = cropped
