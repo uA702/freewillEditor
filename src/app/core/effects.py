@@ -151,7 +151,7 @@ class AddEffect(BaseEffect):
         self.parameters.update({"addend": 0, "channel": 0})
         self.parameters_metadata.update({
             "addend": {"type": "int", "default": 0, "min": -255, "max": 255},
-            "channel": {"type": "int", "default": 0, "min": 0, "max": 2}
+            "channel": {"type": "int", "default": 0, "min": 0, "max": 3}
         })
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -170,6 +170,12 @@ class AddEffect(BaseEffect):
                 else:
                     res_ch = result[:, :, ch].astype(np.int32) + addend
                     result[:, :, ch] = np.clip(res_ch, 0, 255).astype(np.uint8)
+            else: # RGB override 
+                if override:
+                    result += addend  # Force native integer matrix wrapping
+                else:
+                    res_ch = result.astype(np.int32) + addend
+                    result = np.clip(res_ch, 0, 255).astype(np.uint8)
         return result
 
 

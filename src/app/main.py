@@ -190,6 +190,7 @@ if __name__ == "__main__":
     # Setup our basic testing pipeline parameters
     pipeline = EffectsPipeline()
     pipeline.add_layer(fx.BrightnessEffect())
+    pipeline.add_layer(fx.AddEffect())
     pipeline.add_layer(fx.DirectionalBlurEffect())
 
     editor = VideoEditorApp(pipeline)

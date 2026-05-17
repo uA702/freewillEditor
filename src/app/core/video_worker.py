@@ -1,6 +1,7 @@
 import cv2
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
+import time
 import numpy as np
 
 class VideoWorker(QThread):
@@ -31,15 +32,16 @@ class VideoWorker(QThread):
     def run(self):
         """The main playback loop running entirely inside the background thread."""
         self.running = True
-        delay = int(1000 / self.fps)
+        frame_time = int(1000 / self.fps)
 
         while self.running and self.cap and self.cap.isOpened():
+            start_time = time.perf_counter_ns()
+
             ret, frame = self.cap.read()
             if not ret:
                 self.video_ended.emit()
                 self.running = False
                 break
-
             # 1. Process via NumPy Pipeline
             processed = self.pipeline.process(frame)
 
@@ -54,7 +56,10 @@ class VideoWorker(QThread):
             # .copy() prevents memory corruption since numpy arrays change rapidly in memory
             self.frame_processed.emit(q_img.copy()) 
 
-            #self.msleep(delay)
+            elapsed_ms = int((time.perf_counter_ns() - start_time) / 1e6)
+            sleep_time = max(1, frame_time - elapsed_ms)
+
+            self.msleep(sleep_time)
 
     def stop(self):
         self.running = False
