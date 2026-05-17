@@ -302,9 +302,9 @@ class ROIEffect(BaseEffect):
 class LocalEchoEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": True, "delay_frames": 3, "feedback": 50}
+        self.parameters = {"enabled": False, "delay_frames": 3, "feedback": 50}
         self.parameters_metadata = {
-            "enabled": {"type": "bool", "default": True},
+            "enabled": {"type": "bool", "default": False},
             "delay_frames": {"type": "int", "default": 3, "min": 1, "max": 15},
             "feedback": {"type": "int", "default": 50, "min": 0, "max": 95}
         }
@@ -330,9 +330,9 @@ class LocalEchoEffect(BaseEffect):
 class LocalTemporalBlurEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": True, "blend_history": 40}
+        self.parameters = {"enabled": False, "blend_history": 40}
         self.parameters_metadata = {
-            "enabled": {"type": "bool", "default": True},
+            "enabled": {"type": "bool", "default": False},
             "blend_history": {"type": "int", "default": 40, "min": 0, "max": 95}
         }
         self.accumulator = None
