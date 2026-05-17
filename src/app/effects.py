@@ -27,7 +27,7 @@ class BrightnessEffect(BaseEffect):
         super().__init__()
         self.parameters = {"brightness": 100}
         self.parameters_metadata = {
-            "brightness": {"type": "int", "default": 100, "min": 0, "max": 200}
+            "brightness": {"type": "int", "default": 100, "min": 0, "max": 500}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -46,7 +46,7 @@ class ContrastEffect(BaseEffect):
         super().__init__()
         self.parameters = {"contrast": 100}
         self.parameters_metadata = {
-            "contrast": {"type": "int", "default": 100, "min": 0, "max": 200}
+            "contrast": {"type": "int", "default": 100, "min": 0, "max": 500}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -67,7 +67,7 @@ class SaturationEffect(BaseEffect):
         super().__init__()
         self.parameters = {"saturation": 100}
         self.parameters_metadata = {
-            "saturation": {"type": "int", "default": 100, "min": 0, "max": 200}
+            "saturation": {"type": "int", "default": 100, "min": 0, "max": 500}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -92,7 +92,7 @@ class ColorTempEffect(BaseEffect):
         super().__init__()
         self.parameters = {"temperature": 0}
         self.parameters_metadata = {
-            "temperature": {"type": "int", "default": 0, "min": -50, "max": 50}
+            "temperature": {"type": "int", "default": 0, "min": -100, "max": 100}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -118,7 +118,7 @@ class AddEffect(BaseEffect):
         super().__init__()
         self.parameters = {"value": 0}
         self.parameters_metadata = {
-            "value": {"type": "int", "default": 0, "min": -100, "max": 100}
+            "value": {"type": "int", "default": 0, "min": -256, "max": 256}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -154,11 +154,11 @@ class MonochromeEffect(BaseEffect):
 class ColorShiftEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": False, "shift_x": 5, "shift_y": 0}
+        self.parameters = {"enabled": False, "shift_x": 0, "shift_y": 0}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "shift_x": {"type": "int", "default": 5, "min": -50, "max": 50},
-            "shift_y": {"type": "int", "default": 0, "min": -50, "max": 50}
+            "shift_x": {"type": "int", "default": 0, "min": -100, "max": 100},
+            "shift_y": {"type": "int", "default": 0, "min": -100, "max": 100}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -183,8 +183,8 @@ class EdgeDetectionEffect(BaseEffect):
         self.parameters = {"enabled": False, "low_threshold": 50, "high_threshold": 150}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "low_threshold": {"type": "int", "default": 50, "min": 1, "max": 254},
-            "high_threshold": {"type": "int", "default": 150, "min": 2, "max": 255}
+            "low_threshold": {"type": "int", "default": 50, "min": 1, "max": 255},
+            "high_threshold": {"type": "int", "default": 150, "min": 1, "max": 255}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -244,8 +244,8 @@ class LocalBlurEffect(BaseEffect):
         self.parameters = {"enabled": False, "kernel_x": 5, "kernel_y": 5}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "kernel_x": {"type": "int", "default": 5, "min": 1, "max": 49},
-            "kernel_y": {"type": "int", "default": 5, "min": 1, "max": 49}
+            "kernel_x": {"type": "int", "default": 5, "min": 1, "max": 99},
+            "kernel_y": {"type": "int", "default": 5, "min": 1, "max": 99}
         }
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
@@ -323,8 +323,8 @@ class LocalEchoEffect(BaseEffect):
         self.parameters = {"enabled": False, "delay_frames": 3, "feedback": 50}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "delay_frames": {"type": "int", "default": 3, "min": 1, "max": 15},
-            "feedback": {"type": "int", "default": 50, "min": 0, "max": 95}
+            "delay_frames": {"type": "int", "default": 3, "min": 1, "max": 60},
+            "feedback": {"type": "int", "default": 50, "min": 0, "max": 100}
         }
         self.history_buffer = []
 
@@ -351,7 +351,7 @@ class LocalTemporalBlurEffect(BaseEffect):
         self.parameters = {"enabled": False, "blend_history": 40}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "blend_history": {"type": "int", "default": 40, "min": 0, "max": 95}
+            "blend_history": {"type": "int", "default": 40, "min": 0, "max": 100}
         }
         self.accumulator = None
 

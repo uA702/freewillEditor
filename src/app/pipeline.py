@@ -24,7 +24,7 @@ class PipelineStage:
         
         # Temporal State Cache: Independent historical frame buffer
         self.history: List[np.ndarray] = []
-        self.max_history = 100 
+        self.max_history = 200 
 
     def set_inputs(self, input_stage_names: List[str]):
         self.inputs = input_stage_names
