@@ -1,19 +1,18 @@
 import cv2
+import time
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
-import time
-import numpy as np
 
 class VideoWorker(QThread):
-    # Signals to communicate safely with the Main UI Thread
     frame_processed = Signal(QImage)
     export_progress = Signal(int, int)
     export_finished = Signal(bool)
     video_ended = Signal()
 
-    def __init__(self, pipeline):
+    def __init__(self, registry):
         super().__init__()
-        self.pipeline = pipeline
+        self.registry = registry
+        self.active_stage = list(registry.stages.keys())[0] if registry.stages else ""
         self.video_path = ""
         self.cap = None
         self.running = False
@@ -30,48 +29,41 @@ class VideoWorker(QThread):
         return False
 
     def run(self):
-        """The main playback loop running entirely inside the background thread."""
         self.running = True
-        frame_time = int(1000 / self.fps)
+        frame_time = 1000.0 / self.fps
 
         while self.running and self.cap and self.cap.isOpened():
             start_time = time.perf_counter_ns()
-
             ret, frame = self.cap.read()
             if not ret:
                 self.video_ended.emit()
                 self.running = False
                 break
-            # 1. Process via NumPy Pipeline
-            processed = self.pipeline.process(frame)
 
-            # 2. Convert from BGR to RGB
+            # Route the frame through the globally active stage layout
+            processed = self.registry.execute_graph(frame)
+
             rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_frame.shape
             bytes_per_line = ch * w
-
-            # 3. Create a QImage and emit it safely to the UI
             q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-            
-            # .copy() prevents memory corruption since numpy arrays change rapidly in memory
-            self.frame_processed.emit(q_img.copy()) 
+            self.frame_processed.emit(q_img.copy())
 
-            elapsed_ms = int((time.perf_counter_ns() - start_time) / 1e6)
-            sleep_time = max(1, frame_time - elapsed_ms)
-
-            self.msleep(sleep_time)
+            elapsed_ms = (time.perf_counter_ns() - start_time) / 1000000
+            self.msleep(int(max(1, frame_time - elapsed_ms)))
 
     def stop(self):
         self.running = False
         self.wait()
 
     def restart(self):
+        self.registry.clear_history()
         if self.cap and self.cap.isOpened():
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     def export_video(self, output_path):
-        """Runs an offline export sequence without locking up the user interface."""
-        if not self.video_path or not output_path:
+        """Runs an offline export sequence using the currently active stage."""
+        if not self.video_path or not output_path or not self.active_stage:
             self.export_finished.emit(False)
             return
 
@@ -94,7 +86,8 @@ class VideoWorker(QThread):
             if not ret:
                 break
             
-            processed = self.pipeline.process(frame)
+            # Use the active stage for export math routing
+            processed = self.registry.process_stage(self.active_stage, frame)
             writer.write(processed)
             
             frame_count += 1
