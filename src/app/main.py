@@ -78,7 +78,7 @@ class VideoEditorApp(QMainWindow):
         self.sliders_container = QWidget()
         self.sliders_layout = QVBoxLayout(self.sliders_container)
         self.sliders_layout.setAlignment(Qt.AlignTop)
-        self.sliders_layout.setContentsMargins(0, 0, 0, 0)
+        self.sliders_layout.setContentsMargins(5, 5, 5, 5)
         
         scroll_area.setWidget(self.sliders_container)
         self.controls_layout.addWidget(scroll_area) # Put the scroll area into the sidebar container
