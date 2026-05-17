@@ -268,13 +268,11 @@ class ThresholdingEffect(BaseEffect):
 
         _, binary = cv2.threshold(gray, val, 255, cv2.THRESH_BINARY)
         return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
-
-
-# --- 12: DIRECTIONAL U/V BLURRING ---
-class DirectionalBlurEffect(BaseEffect):
+    
+class LocalBlurEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters.update({"blur_u": 1, "blur_v": 1}) 
+        self.parameters.update({"blur_u": 1, "blur_v": 1})
         self.parameters_metadata.update({
             "blur_u": {"type": "int", "default": 1, "min": 1, "max": 100},
             "blur_v": {"type": "int", "default": 1, "min": 1, "max": 100}
@@ -292,7 +290,6 @@ class DirectionalBlurEffect(BaseEffect):
 
         if override:
             kernel = np.ones((v_size, u_size), np.float32) * 2.0
-            # filter2D handles internal float accumulation safely, but we cast out bounds cleanly here
             res = cv2.filter2D(frame.astype(np.float32), -1, kernel).astype(np.int32)
             return (res & 0xFF).astype(np.uint8)
             
@@ -301,5 +298,59 @@ class DirectionalBlurEffect(BaseEffect):
             kernel[v_size // 2, :] = 1.0 / u_size
         else:
             kernel[:, u_size // 2] = 1.0 / v_size
-
         return cv2.filter2D(frame, -1, kernel)
+
+
+class LocalEchoEffect(BaseEffect):
+    def __init__(self):
+        super().__init__()
+        self.history = []
+        self.parameters.update({"frame_delay": 1, "echo_mix": 30})
+        self.parameters_metadata.update({
+            "frame_delay": {"type": "int", "default": 1, "min": 1, "max": 25},
+            "echo_mix": {"type": "int", "default": 30, "min": 0, "max": 100}
+        })
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        delay = self.parameters["frame_delay"]
+        mix = self.parameters["echo_mix"] / 100.0
+        override = self.parameters["override_clipping"]
+
+        # Keep track of local frame history
+        self.history.append(frame.copy())
+        if len(self.history) > delay:
+            self.history.pop(0)
+
+        delayed_frame = self.history[0]
+        
+        # Calculate trailing echo blend
+        if override:
+            res = (frame.astype(np.float32) + (delayed_frame.astype(np.float32) * mix)).astype(np.int32)
+            return (res & 0xFF).astype(np.uint8)
+            
+        return cv2.addWeighted(frame, 1.0 - (mix * 0.5), delayed_frame, mix * 0.5, 0)
+
+
+class LocalTemporalBlurEffect(BaseEffect):
+    def __init__(self):
+        super().__init__()
+        self.history = []
+        self.parameters.update({"length": 1})
+        self.parameters_metadata.update({
+            "length": {"type": "int", "default": 1, "min": 1, "max": 30}
+        })
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        length = self.parameters["length"]
+        override = self.parameters["override_clipping"]
+
+        self.history.append(frame.copy().astype(np.float32))
+        if len(self.history) > length:
+            self.history.pop(0)
+
+        # Average out history stack
+        avg_canvas = np.mean(self.history, axis=0)
+
+        if override:
+            return (avg_canvas.astype(np.int32) & 0xFF).astype(np.uint8)
+        return avg_canvas.astype(np.uint8)

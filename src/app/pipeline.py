@@ -106,107 +106,211 @@ def custom_blend_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[st
     
     return cv2.addWeighted(img_a, weight_percent, img_b, 1.0 - weight_percent, 0)
 
+# --- Custom Behavior 5: Multi-Channel Audio-Style Video Mixer Console ---
+def custom_multi_mixer_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
+    if not node.inputs: 
+        return frame.copy()
+    
+    # 1. Dynamically sync parameters and metadata based on current inputs
+    # If a new input connection is detected, generate a matching slider (0-100%)
+    for input_name in node.inputs:
+        param_key = f"volume_{input_name}"
+        if param_key not in node.parameters:
+            node.parameters[param_key] = 50  # Default to 50% mix volume
+            node.parameters_metadata[param_key] = {
+                "type": "int", "default": 50, "min": 0, "max": 100
+            }
 
-# --- Custom Behavior 3: Variable Ghosting Temporal Node ---
-def custom_temporal_echo_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
-    out = deps[node.inputs[0]].copy() if node.inputs else frame.copy()
-    
-    delay = node.parameters["frame_delay"]
-    mix = node.parameters["echo_mix"] / 100.0
-    
-    # Extract historical frame if buffer has grown deep enough
-    if len(node.history) > delay:
-        past_frame = node.history[-int(delay)]
-        out = cv2.addWeighted(out, 1.0 - mix, past_frame, mix, 0)
-    return out
+    # 2. Initialize an empty floating point canvas for compounding track layers
+    h, w, c = frame.shape
+    mixed_canvas = np.zeros((h, w, c), dtype=np.float32)
+    total_weight = 0.0
 
-# --- Custom Behavior 4: Variable Motion Blur Temporal Node ---
-def custom_temporal_blur_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
-    # 1. Determine the source frame (either from a parent dependency node or the raw video)
-    out = deps[node.inputs[0]].copy() if node.inputs else frame.copy()
-    
-    # 2. Safely clip our target length to the number of frames actually available in history
-    requested_length = node.parameters["length"]
-    actual_length = min(requested_length, len(node.history))
-    
-    # If we don't have enough history built up yet to average, just return the current frame
-    if actual_length <= 1:
-        return out
+    # 3. Accumulate every track based on its active slider "volume"
+    for input_name in node.inputs:
+        if input_name in deps:
+            track_frame = deps[input_name].astype(np.float32)
+            volume = node.parameters.get(f"volume_{input_name}", 50) / 100.0
+            
+            mixed_canvas += track_frame * volume
+            total_weight += volume
 
-    # 3. Slice the last 'N' frames from our history list
-    # (e.g., if actual_length is 5, this grabs the 5 most recent frames)
-    frames_to_average = node.history[-actual_length:]
+    # 4. Normalize the mix to avoid unintended blowouts (unless override is on!)
+    # We check a global configuration or use the frame's upstream clipping context
+    # For a mixer console, normalizing by total weight keeps the image exposure balanced.
+    if total_weight > 0.0:
+        mixed_canvas /= total_weight
+
+    # 5. Output rendering with your requested overflow glitch compatibility
+    # If you want to allow individual channel volumes to glitch past 255, 
+    # we cast to int32 and execute the 0xFF mask.
+    # (Checking against any parent stage's override, or a local parameter)
+    res_int = mixed_canvas.astype(np.int32)
+    return (res_int & 0xFF).astype(np.uint8)
+
+# --- Custom Behavior 6: Dynamic ROI Mask with Alpha Transparency ---
+def custom_roi_alpha_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
+    # 1. Get incoming frame (ensure we copy so we don't mutate dependencies)
+    input_frame = deps[node.inputs[0]].copy() if node.inputs else frame.copy()
+    h, w = input_frame.shape[:2]
     
-    # 4. Stack the frames into a 4D array along axis 0 (Time, Height, Width, Channels)
-    stacked_frames = np.stack(frames_to_average, axis=0)
+    # 2. Safely convert incoming BGR frame to BGRA to support alpha transparency
+    if input_frame.shape[2] == 3:
+        img_bgra = cv2.cvtColor(input_frame, cv2.COLOR_BGR2BGRA)
+    else:
+        img_bgra = input_frame
+
+    # 3. Read slider parameters
+    x_pct = node.parameters.get("center_x", 50) / 100.0
+    y_pct = node.parameters.get("center_y", 50) / 100.0
+    w_pct = node.parameters.get("width", 30) / 100.0
+    h_pct = node.parameters.get("height", 30) / 100.0
+    invert = node.parameters.get("invert", False)
+
+    # 4. Convert percentages to absolute pixel coordinates
+    center_x, center_y = int(w * x_pct), int(h * y_pct)
+    roi_w, roi_h = int(w * w_pct), int(h * h_pct)
     
-    # 5. Average them along the Time axis (axis=0)
-    # We use np.mean, but np.average works identically here.
-    # Crucial: We must compute this as float32 to prevent integer division clipping!
-    averaged_blur = np.mean(stacked_frames, axis=0)
-    
-    # 6. Cast back to uint8 so OpenCV and your PySide6 canvas can read it natively
-    return averaged_blur.astype(np.uint8)
+    x1 = max(0, center_x - (roi_w // 2))
+    y1 = max(0, center_y - (roi_h // 2))
+    x2 = min(w, center_x + (roi_w // 2))
+    y2 = min(h, center_y + (roi_h // 2))
+
+    # 5. Build the alpha mask canvas (0 = transparent, 255 = opaque)
+    mask = np.zeros((h, w), dtype=np.uint8)
+    if (x2 > x1) and (y2 > y1):
+        mask[y1:y2, x1:x2] = 255
+
+    # 6. Apply the inversion toggle
+    if invert:
+        mask = cv2.bitwise_not(mask)
+
+    # 7. Overwrite the Alpha channel (index 3) with our generated mask
+    img_bgra[:, :, 3] = mask
+
+    return img_bgra
+
+# =====================================================================
+# 1. INITIALIZE MASTER EFFECT LAYERS (USING THE 'fx.' NAMESPACE)
+# =====================================================================
+# --- Channel 1 Layers ---
+fx_b1_bright   = fx.BrightnessEffect();   fx_b1_contrast = fx.ContrastEffect()
+fx_b1_sat      = fx.SaturationEffect();   fx_b1_temp     = fx.ColorTempEffect()
+fx_b1_add      = fx.AddEffect();          fx_b1_cshift   = fx.ColorShiftEffect()
+fx_b1_blur     = fx.LocalBlurEffect();    fx_b1_echo     = fx.LocalEchoEffect()
+fx_b1_tblur    = fx.LocalTemporalBlurEffect()
+
+# --- Channel 2 Layers ---
+fx_b2_bright   = fx.BrightnessEffect();   fx_b2_contrast = fx.ContrastEffect()
+fx_b2_sat      = fx.SaturationEffect();   fx_b2_temp     = fx.ColorTempEffect()
+fx_b2_add      = fx.AddEffect();          fx_b2_cshift   = fx.ColorShiftEffect()
+fx_b2_blur     = fx.LocalBlurEffect();    fx_b2_echo     = fx.LocalEchoEffect()
+fx_b2_tblur    = fx.LocalTemporalBlurEffect()
+
+# --- Channel 3 Layers ---
+fx_m1_mono     = fx.MonochromeEffect();   fx_m1_edges    = fx.EdgeDetectionEffect()
+fx_m1_thresh   = fx.ThresholdingEffect(); fx_m1_cmap     = fx.ColorMappingEffect()
+fx_m1_blur     = fx.LocalBlurEffect();    fx_m1_echo     = fx.LocalEchoEffect()
+fx_m1_tblur    = fx.LocalTemporalBlurEffect()
+
+# --- Channel 4 Layers ---
+fx_m2_mono     = fx.MonochromeEffect();   fx_m2_edges    = fx.EdgeDetectionEffect()
+fx_m2_thresh   = fx.ThresholdingEffect(); fx_m2_cmap     = fx.ColorMappingEffect()
+fx_m2_blur     = fx.LocalBlurEffect();    fx_m2_echo     = fx.LocalEchoEffect()
+fx_m2_tblur    = fx.LocalTemporalBlurEffect()
+
+# --- Post Finishing Layers ---
+fx_post_bright   = fx.BrightnessEffect();   fx_post_contrast = fx.ContrastEffect()
+fx_post_sat      = fx.SaturationEffect();   fx_post_temp     = fx.ColorTempEffect()
+fx_post_add      = fx.AddEffect();          fx_post_blur     = fx.LocalBlurEffect()
+fx_post_echo     = fx.LocalEchoEffect();    fx_post_tblur    = fx.LocalTemporalBlurEffect()
 
 
 # =====================================================================
-# INJECT AND INITIALIZE STAGES
+# 2. ASSEMBLE ALL-IN-ONE MASTER PLUGINS
 # =====================================================================
 
-fx_bright = fx.BrightnessEffect()
-fx_color = fx.ColorShiftEffect()
-fx_sat = fx.SaturationEffect()
-fx_contrast = fx.ContrastEffect()
-fx_thresh = fx.ThresholdingEffect()
-fx_edge   = fx.EdgeDetectionEffect()
-fx_add = fx.AddEffect()
-fx_blur = fx.DirectionalBlurEffect()
-fx_colormap = fx.ColorMappingEffect()
+# --- MASTER STAGE 1: BASIC CHANNEL 1 ---
+stage_channel_1 = PipelineStage("Channel 1: Basic Alpha", standard_linear_processor)
+stage_channel_1.add_layers([
+    fx_b1_bright, fx_b1_contrast, fx_b1_sat, 
+    fx_b1_temp, fx_b1_add, fx_b1_cshift,
+    fx_b1_blur, fx_b1_echo, fx_b1_tblur
+])
 
-# 1. Create Linear Processing Chains
-stage_basic  = PipelineStage("Base effects", standard_linear_processor).add_layers([fx_bright, fx_contrast, fx_color, fx_sat])
-stage_thresh = PipelineStage("Thresholding chain", standard_linear_processor).add_layers([fx_thresh, fx_blur, fx_colormap])
-stage_glitch = PipelineStage("Glitch chain", standard_linear_processor).add_layers([fx_add, fx_bright])
+# --- MASTER STAGE 2: BASIC CHANNEL 2 ---
+stage_channel_2 = PipelineStage("Channel 2: Basic Beta", standard_linear_processor)
+stage_channel_2.add_layers([
+    fx_b2_bright, fx_b2_contrast, fx_b2_sat, 
+    fx_b2_temp, fx_b2_add, fx_b2_cshift,
+    fx_b2_blur, fx_b2_echo, fx_b2_tblur
+])
 
-# 2. Create Custom Blender with Exposed Sliders
-stage_merge1 = PipelineStage("Merge glitch/thresh", custom_blend_processor).set_inputs(["Thresholding chain", "Glitch chain"])
-# Define structural parameters unique to this specific blending node behavior
-stage_merge1.parameters = {"blend_ratio": 50}
-stage_merge1.parameters_metadata = {
-    "blend_ratio": {"type": "int", "default": 50, "min": 0, "max": 100}
+# --- MASTER STAGE 3: MONOCHROME CHANNEL 1 ---
+stage_channel_3 = PipelineStage("Channel 3: Mono Glitch Alpha", standard_linear_processor)
+stage_channel_3.add_layers([
+    fx_m1_mono, fx_m1_edges, fx_m1_thresh, fx_m1_cmap,
+    fx_m1_blur, fx_m1_echo, fx_m1_tblur
+])
+
+# --- MASTER STAGE 4: MONOCHROME CHANNEL 2 ---
+stage_channel_4 = PipelineStage("Channel 4: Mono Glitch Beta", standard_linear_processor)
+stage_channel_4.add_layers([
+    fx_m2_mono, fx_m2_edges, fx_m2_thresh, fx_m2_cmap,
+    fx_m2_blur, fx_m2_echo, fx_m2_tblur
+])
+
+
+# =====================================================================
+# 3. CENTRAL AUDIO-STYLE MIXER DESK
+# =====================================================================
+master_mixer = PipelineStage("Master Mixer Desk", custom_multi_mixer_processor)
+master_mixer.set_inputs([
+    "Channel 1: Basic Alpha",
+    "Channel 2: Basic Beta",
+    "Channel 3: Mono Glitch Alpha",
+    "Channel 4: Mono Glitch Beta"
+])
+
+# Define the master volumes (0-100%) directly on the stage parameters
+master_mixer.parameters = {
+    "volume_Channel 1: Basic Alpha": 100,
+    "volume_Channel 2: Basic Beta": 0,
+    "volume_Channel 3: Mono Glitch Alpha": 0,
+    "volume_Channel 4: Mono Glitch Beta": 0
 }
 
-# 3. Create Custom Blender with Exposed Sliders
-stage_merge2 = PipelineStage("Merge basic", custom_blend_processor).set_inputs(["Base effects", "Merge glitch/thresh"])
-# Define structural parameters unique to this specific blending node behavior
-stage_merge2.parameters = {"blend_ratio": 50}
-stage_merge2.parameters_metadata = {
-    "blend_ratio": {"type": "int", "default": 50, "min": 0, "max": 100}
+# Provide the UI metadata so the slider generator knows the ranges
+master_mixer.parameters_metadata = {
+    "volume_Channel 1: Basic Alpha":       {"type": "int", "default": 100, "min": 0, "max": 100},
+    "volume_Channel 2: Basic Beta":        {"type": "int", "default": 0,   "min": 0, "max": 100},
+    "volume_Channel 3: Mono Glitch Alpha": {"type": "int", "default": 0,   "min": 0, "max": 100},
+    "volume_Channel 4: Mono Glitch Beta":  {"type": "int", "default": 0,   "min": 0, "max": 100}
 }
 
-# 4. Create Custom Temporal Ghosting Node with Exposed Sliders
-stage_echo = PipelineStage("Echo", custom_temporal_echo_processor).set_inputs(["Merge basic"])
-stage_echo.parameters = {"frame_delay": 5, "echo_mix": 40}
-stage_echo.parameters_metadata = {
-    "frame_delay": {"type": "int", "default": 5, "min": 1, "max": 25},
-    "echo_mix": {"type": "int", "default": 40, "min": 0, "max": 100}
-}
 
-# 5. Create Custom Temporal Blur with Exposed Sliders
-stage_temporal_blur = PipelineStage("Temporal Blur", custom_temporal_blur_processor).set_inputs(["Echo"])
-stage_temporal_blur.parameters = {"length": 5}
-stage_temporal_blur.parameters_metadata = {
-    "length": {"type": "int", "default": 5, "min": 1, "max": 25}
-}
+# =====================================================================
+# 4. MASTER STAGE 5: POST-MIX FINISHING PATH
+# =====================================================================
+stage_post_finishing = PipelineStage("Channel 5: Post Finishing", standard_linear_processor)
+stage_post_finishing.set_inputs(["Master Mixer Desk"])
+stage_post_finishing.add_layers([
+    fx_post_bright, fx_post_contrast, fx_post_sat, 
+    fx_post_temp, fx_post_add,
+    fx_post_blur, fx_post_echo, fx_post_tblur
+])
 
-# Register everything to the engine
+
+# =====================================================================
+# 5. REGISTER TO GRAPH MANAGEMENT ENGINE
+# =====================================================================
 graph_manager = PipelineGraphRegistry()
-graph_manager.add_stage(stage_basic)
-graph_manager.add_stage(stage_thresh)
-graph_manager.add_stage(stage_glitch)
-graph_manager.add_stage(stage_merge1)
-graph_manager.add_stage(stage_merge2)
-graph_manager.add_stage(stage_echo)
-graph_manager.add_stage(stage_temporal_blur)
 
-graph_manager.set_output_node("Temporal Blur")
+graph_manager.add_stage(stage_channel_1)
+graph_manager.add_stage(stage_channel_2)
+graph_manager.add_stage(stage_channel_3)
+graph_manager.add_stage(stage_channel_4)
+graph_manager.add_stage(master_mixer)
+graph_manager.add_stage(stage_post_finishing)
+
+graph_manager.set_output_node("Channel 5: Post Finishing")

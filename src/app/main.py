@@ -1,9 +1,9 @@
 import sys
 import threading
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QLineEdit, 
-                             QFileDialog, QGroupBox, QSlider, QComboBox, 
-                             QCheckBox, QProgressDialog, QMessageBox)
+                               QHBoxLayout, QPushButton, QLabel, QLineEdit, 
+                               QFileDialog, QGroupBox, QSlider, QComboBox, 
+                               QCheckBox, QProgressDialog, QMessageBox, QScrollArea)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 
@@ -68,9 +68,20 @@ class VideoEditorApp(QMainWindow):
         self.combo_stages.currentTextChanged.connect(self.on_stage_changed)
         self.controls_layout.addWidget(self.combo_stages)
         
+        # FIX: Implement a Scroll Area wrapper to make the dynamic slider container scrollable
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
         self.sliders_container = QWidget()
         self.sliders_layout = QVBoxLayout(self.sliders_container)
-        self.controls_layout.addWidget(self.sliders_container)
+        self.sliders_layout.setAlignment(Qt.AlignTop)
+        self.sliders_layout.setContentsMargins(0, 0, 0, 0)
+        
+        scroll_area.setWidget(self.sliders_container)
+        self.controls_layout.addWidget(scroll_area) # Put the scroll area into the sidebar container
         
         body_layout.addWidget(self.controls_box)
 
@@ -135,11 +146,11 @@ class VideoEditorApp(QMainWindow):
         lbl_stage.setStyleSheet("color: #00C000; font-weight: bold; margin-top: 12px; font-size: 11pt;")
         self.sliders_layout.addWidget(lbl_stage)
 
-        # --- PART A: Selected Node Properties (e.g., blend_ratio, motion blur length) ---
+        # --- PART A: Selected Node Properties (e.g., Mixer crossfades / volume sliders) ---
         if stage.parameters_metadata:
             for param, meta in stage.parameters_metadata.items():
                 if meta.get("type") == "int":
-                    self.sliders_layout.addWidget(QLabel(f"  [Node Property] {param}:"))
+                    self.sliders_layout.addWidget(QLabel(f"   [Mix Slider] {param}:"))
                     
                     row_widget = QWidget()
                     row_layout = QHBoxLayout(row_widget)
@@ -161,11 +172,17 @@ class VideoEditorApp(QMainWindow):
                     row_layout.addWidget(slider)
                     row_layout.addWidget(lbl_val)
                     self.sliders_layout.addWidget(row_widget)
+                    
+                elif meta.get("type") == "bool":
+                    checkbox = QCheckBox(f"   [Node Property] Enable {param}")
+                    checkbox.setChecked(stage.parameters[param])
+                    checkbox.stateChanged.connect(lambda state, s=stage, p=param: s.set_parameter(p, state == 2))
+                    self.sliders_layout.addWidget(checkbox)
 
         # --- PART B: Selected Stage Child Filter Layers ---
         for layer in stage.layers:
             lbl_title = QLabel(f"  └─ Layer: {layer.__class__.__name__}")
-            lbl_title.setStyleSheet("font-weight: bold; color: #1976D2; margin-left: 5px;")
+            lbl_title.setStyleSheet("font-weight: bold; color: #1976D2; margin-top: 6px; margin-left: 5px;")
             self.sliders_layout.addWidget(lbl_title)
 
             for param, meta in layer.parameters_metadata.items():
@@ -184,8 +201,9 @@ class VideoEditorApp(QMainWindow):
                     lbl_val.setFixedWidth(30)
                     lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     
+                    # FIXED: Typo corrected from l.set_paarameter() to l.set_parameter()
                     slider.valueChanged.connect(lambda val, l=layer, p=param, lv=lbl_val: [
-                        l.set_paarameter(p, val),
+                        l.set_parameter(p, val),
                         lv.setText(str(val))
                     ])
                     
@@ -196,7 +214,8 @@ class VideoEditorApp(QMainWindow):
                 elif meta.get("type") == "bool":
                     checkbox = QCheckBox(f"      Enable {param}")
                     checkbox.setChecked(layer.parameters[param])
-                    checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_paarameter(p, state == 2))
+                    # FIXED: Typo corrected from l.set_paarameter() to l.set_parameter()
+                    checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_parameter(p, state == 2))
                     self.sliders_layout.addWidget(checkbox)
         
         self.sliders_layout.addStretch()
@@ -235,7 +254,6 @@ class VideoEditorApp(QMainWindow):
         self.btn_play.setText("Play")
         QMessageBox.information(self, "Playback Complete", "Video playback loop finished.")
 
-    # RESTORED: Multi-Threaded Export Workflow Functions
     def start_export(self):
         if not self.txt_input.text() or not self.txt_output.text():
             QMessageBox.warning(self, "Paths Missing", "Please select file routes before attempting export workflows.")
@@ -250,13 +268,11 @@ class VideoEditorApp(QMainWindow):
         self.worker.export_progress.connect(lambda current, total: self.progress_dialog.setValue(int((current / total) * 100)))
         self.worker.export_finished.connect(self.on_export_finished)
 
-        # Offload file rendering execution loop to a secondary processing context
         t = threading.Thread(target=lambda: self.worker.export_video(self.txt_output.text()))
         t.start()
 
     def on_export_finished(self, success):
         self.progress_dialog.close()
-        # Disconnect signals so they don't fire twice on subsequent exports
         try:
             self.worker.export_progress.disconnect()
             self.worker.export_finished.disconnect()
