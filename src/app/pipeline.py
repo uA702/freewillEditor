@@ -161,7 +161,7 @@ fx_b1_cshift   = fx.ColorShiftEffect()
 fx_b1_blur     = fx.LocalBlurEffect()
 fx_b1_echo     = fx.LocalEchoEffect()
 fx_b1_tblur    = fx.LocalTemporalBlurEffect()
-fx_b1_roi = fx.ROIEffect()
+fx_b1_roi      = fx.ROIEffect()
 
 # --- Channel 2 Layers ---
 fx_b2_bright   = fx.BrightnessEffect()
@@ -173,7 +173,7 @@ fx_b2_cshift   = fx.ColorShiftEffect()
 fx_b2_blur     = fx.LocalBlurEffect()
 fx_b2_echo     = fx.LocalEchoEffect()
 fx_b2_tblur    = fx.LocalTemporalBlurEffect()
-fx_b2_roi = fx.ROIEffect()
+fx_b2_roi      = fx.ROIEffect()
 
 # --- Channel 3 Layers ---
 fx_m1_mono     = fx.MonochromeEffect()
@@ -185,7 +185,7 @@ fx_m1_cmap     = fx.ColorMappingEffect()
 fx_m1_blur     = fx.LocalBlurEffect() 
 fx_m1_echo     = fx.LocalEchoEffect()
 fx_m1_tblur    = fx.LocalTemporalBlurEffect()
-fx_m1_roi = fx.ROIEffect()
+fx_m1_roi      = fx.ROIEffect()
 
 # --- Channel 4 Layers ---
 fx_m2_mono     = fx.MonochromeEffect()
@@ -197,7 +197,7 @@ fx_m2_cmap     = fx.ColorMappingEffect()
 fx_m2_blur     = fx.LocalBlurEffect()
 fx_m2_echo     = fx.LocalEchoEffect()
 fx_m2_tblur    = fx.LocalTemporalBlurEffect()
-fx_m2_roi = fx.ROIEffect()
+fx_m2_roi      = fx.ROIEffect()
 
 # --- Post Finishing Layers ---
 fx_post_bright   = fx.BrightnessEffect()
@@ -235,18 +235,18 @@ stage_channel_2.add_layers([
 # --- MASTER STAGE 3: MONOCHROME CHANNEL 1 ---
 stage_channel_3 = PipelineStage("Channel 3: Mono Glitch Alpha", standard_linear_processor)
 stage_channel_3.add_layers([
-    fx_m1_mono, fx_m1_bright, fx_m1_contrast,
-    fx_m1_thresh, fx_m1_edges, 
-    fx_m1_blur, fx_m1_echo, fx_m1_tblur, 
+    fx_m1_mono, fx_m1_thresh, fx_m1_edges, 
+    fx_m1_blur, fx_m1_bright, fx_m1_contrast,
+    fx_m1_echo, fx_m1_tblur, 
     fx_m1_cmap, fx_m1_roi
 ])
 
 # --- MASTER STAGE 4: MONOCHROME CHANNEL 2 ---
 stage_channel_4 = PipelineStage("Channel 4: Mono Glitch Beta", standard_linear_processor)
 stage_channel_4.add_layers([
-    fx_m2_mono, fx_m2_bright, fx_m2_contrast,
-    fx_m2_thresh, fx_m2_edges,
-    fx_m2_blur, fx_m2_echo, fx_m2_tblur,
+    fx_m2_mono, fx_m2_thresh, fx_m2_edges,
+    fx_m2_blur, fx_m2_bright, fx_m2_contrast,
+    fx_m2_echo, fx_m2_tblur,
     fx_m2_cmap, fx_m2_roi
 ])
 
