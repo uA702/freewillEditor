@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+src/app/__init__.py
+src/app/main.py
+src/app/core/__init__.py
+src/app/core/effects.py
+src/app/core/pipeline.py
+src/app/core/video_processor.py
+src/my_app.egg-info/PKG-INFO
+src/my_app.egg-info/SOURCES.txt
+src/my_app.egg-info/dependency_links.txt
+src/my_app.egg-info/requires.txt
+src/my_app.egg-info/top_level.txt

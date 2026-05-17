@@ -1,0 +1,12 @@
+[project]
+name = "my_app"
+version = "0.1.0"
+dependencies = [
+    "opencv-python",
+    "numpy",
+    "pyside6",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
