@@ -114,96 +114,90 @@ class VideoEditorApp(QMainWindow):
                 self._collect_active_stages(input_dep, active_set)
 
     def generate_effect_sliders(self):
-        """Cleans and builds parameters ONLY for the active stage and its upstream dependencies."""
+        """Cleans and builds parameters ONLY for the single selected stage node."""
         # 1. Clear old slider widgets from the layout
         while self.sliders_layout.count():
             item = self.sliders_layout.takeAt(0)
             widget = item.widget()
-            if widget: 
-                widget.deleteLater()
+            if widget: widget.deleteLater()
 
         current_stage_name = self.combo_stages.currentText()
         if not current_stage_name: 
             return
         
-        # 2. Determine exactly which nodes are part of this specific pipeline branch
-        active_stages = set()
-        self._collect_active_stages(current_stage_name, active_stages)
+        # 2. Extract ONLY the specifically selected stage instance
+        stage = self.registry.stages.get(current_stage_name)
+        if not stage: 
+            return
 
-        # 3. Render only the active stages
-        for stage_name in active_stages:
-            stage = self.registry.stages[stage_name]
-            
-            # Draw Node Header
-            lbl_stage = QLabel(f"STAGE: {stage_name}")
-            lbl_stage.setStyleSheet("color: #00B000; font-weight: bold; margin-top: 12px; font-size: 11pt;")
-            self.sliders_layout.addWidget(lbl_stage)
+        # Draw Node Header
+        lbl_stage = QLabel(f"STAGE: {current_stage_name}")
+        lbl_stage.setStyleSheet("color: #00C000; font-weight: bold; margin-top: 12px; font-size: 11pt;")
+        self.sliders_layout.addWidget(lbl_stage)
 
-            # --- PART A: Node Properties (e.g., weights, delays) ---
-            if stage.parameters_metadata:
-                for param, meta in stage.parameters_metadata.items():
-                    if meta.get("type") == "int":
-                        self.sliders_layout.addWidget(QLabel(f"  [Node Property] {param}:"))
-                        
-                        # Create a row container to hold the slider and its numerical value label
-                        row_widget = QWidget()
-                        row_layout = QHBoxLayout(row_widget)
-                        row_layout.setContentsMargins(0, 0, 0, 0)
-                        
-                        slider = QSlider(Qt.Horizontal)
-                        slider.setRange(meta["min"], meta["max"])
-                        slider.setValue(stage.parameters[param])
-                        
-                        lbl_val = QLabel(str(stage.parameters[param]))
-                        lbl_val.setFixedWidth(30)
-                        lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                        
-                        # Set up the slider to update both the logic value and the numeric display
-                        slider.valueChanged.connect(lambda val, s=stage, p=param, l=lbl_val: [
-                            s.set_parameter(p, val),
-                            l.setText(str(val))
-                        ])
-                        
-                        row_layout.addWidget(slider)
-                        row_layout.addWidget(lbl_val)
-                        self.sliders_layout.addWidget(row_widget)
+        # --- PART A: Selected Node Properties (e.g., blend_ratio, motion blur length) ---
+        if stage.parameters_metadata:
+            for param, meta in stage.parameters_metadata.items():
+                if meta.get("type") == "int":
+                    self.sliders_layout.addWidget(QLabel(f"  [Node Property] {param}:"))
+                    
+                    row_widget = QWidget()
+                    row_layout = QHBoxLayout(row_widget)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
+                    
+                    slider = QSlider(Qt.Horizontal)
+                    slider.setRange(meta["min"], meta["max"])
+                    slider.setValue(stage.parameters[param])
+                    
+                    lbl_val = QLabel(str(stage.parameters[param]))
+                    lbl_val.setFixedWidth(30)
+                    lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    
+                    slider.valueChanged.connect(lambda val, s=stage, p=param, l=lbl_val: [
+                        s.set_parameter(p, val),
+                        l.setText(str(val))
+                    ])
+                    
+                    row_layout.addWidget(slider)
+                    row_layout.addWidget(lbl_val)
+                    self.sliders_layout.addWidget(row_widget)
 
-            # --- PART B: Child Filter Layers ---
-            for layer in stage.layers:
-                lbl_title = QLabel(f"  └─ Layer: {layer.__class__.__name__}")
-                lbl_title.setStyleSheet("font-weight: bold; color: #1976D2; margin-left: 5px;")
-                self.sliders_layout.addWidget(lbl_title)
+        # --- PART B: Selected Stage Child Filter Layers ---
+        for layer in stage.layers:
+            lbl_title = QLabel(f"  └─ Layer: {layer.__class__.__name__}")
+            lbl_title.setStyleSheet("font-weight: bold; color: #1976D2; margin-left: 5px;")
+            self.sliders_layout.addWidget(lbl_title)
 
-                for param, meta in layer.parameters_metadata.items():
-                    if meta.get("type") == "int":
-                        self.sliders_layout.addWidget(QLabel(f"      {param}:"))
-                        
-                        row_widget = QWidget()
-                        row_layout = QHBoxLayout(row_widget)
-                        row_layout.setContentsMargins(0, 0, 0, 0)
-                        
-                        slider = QSlider(Qt.Horizontal)
-                        slider.setRange(meta["min"], meta["max"])
-                        slider.setValue(layer.parameters[param])
-                        
-                        lbl_val = QLabel(str(layer.parameters[param]))
-                        lbl_val.setFixedWidth(30)
-                        lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                        
-                        slider.valueChanged.connect(lambda val, l=layer, p=param, lv=lbl_val: [
-                            l.set_paarameter(p, val),
-                            lv.setText(str(val))
-                        ])
-                        
-                        row_layout.addWidget(slider)
-                        row_layout.addWidget(lbl_val)
-                        self.sliders_layout.addWidget(row_widget)
-                        
-                    elif meta.get("type") == "bool":
-                        checkbox = QCheckBox(f"      Enable {param}")
-                        checkbox.setChecked(layer.parameters[param])
-                        checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_paarameter(p, state == 2))
-                        self.sliders_layout.addWidget(checkbox)
+            for param, meta in layer.parameters_metadata.items():
+                if meta.get("type") == "int":
+                    self.sliders_layout.addWidget(QLabel(f"      {param}:"))
+                    
+                    row_widget = QWidget()
+                    row_layout = QHBoxLayout(row_widget)
+                    row_layout.setContentsMargins(0, 0, 0, 0)
+                    
+                    slider = QSlider(Qt.Horizontal)
+                    slider.setRange(meta["min"], meta["max"])
+                    slider.setValue(layer.parameters[param])
+                    
+                    lbl_val = QLabel(str(layer.parameters[param]))
+                    lbl_val.setFixedWidth(30)
+                    lbl_val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    
+                    slider.valueChanged.connect(lambda val, l=layer, p=param, lv=lbl_val: [
+                        l.set_paarameter(p, val),
+                        lv.setText(str(val))
+                    ])
+                    
+                    row_layout.addWidget(slider)
+                    row_layout.addWidget(lbl_val)
+                    self.sliders_layout.addWidget(row_widget)
+                    
+                elif meta.get("type") == "bool":
+                    checkbox = QCheckBox(f"      Enable {param}")
+                    checkbox.setChecked(layer.parameters[param])
+                    checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_paarameter(p, state == 2))
+                    self.sliders_layout.addWidget(checkbox)
         
         self.sliders_layout.addStretch()
 

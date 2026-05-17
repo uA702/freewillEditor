@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 from typing import List, Dict, Callable, Any
-from effects import BaseEffect, ColorShiftEffect, BrightnessEffect, ContrastEffect
+import effects as fx
 
 class PipelineStage:
     """
@@ -120,40 +120,93 @@ def custom_temporal_echo_processor(node: PipelineStage, frame: np.ndarray, deps:
         out = cv2.addWeighted(out, 1.0 - mix, past_frame, mix, 0)
     return out
 
+# --- Custom Behavior 4: Variable Motion Blur Temporal Node ---
+def custom_temporal_blur_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
+    # 1. Determine the source frame (either from a parent dependency node or the raw video)
+    out = deps[node.inputs[0]].copy() if node.inputs else frame.copy()
+    
+    # 2. Safely clip our target length to the number of frames actually available in history
+    requested_length = node.parameters["length"]
+    actual_length = min(requested_length, len(node.history))
+    
+    # If we don't have enough history built up yet to average, just return the current frame
+    if actual_length <= 1:
+        return out
+
+    # 3. Slice the last 'N' frames from our history list
+    # (e.g., if actual_length is 5, this grabs the 5 most recent frames)
+    frames_to_average = node.history[-actual_length:]
+    
+    # 4. Stack the frames into a 4D array along axis 0 (Time, Height, Width, Channels)
+    stacked_frames = np.stack(frames_to_average, axis=0)
+    
+    # 5. Average them along the Time axis (axis=0)
+    # We use np.mean, but np.average works identically here.
+    # Crucial: We must compute this as float32 to prevent integer division clipping!
+    averaged_blur = np.mean(stacked_frames, axis=0)
+    
+    # 6. Cast back to uint8 so OpenCV and your PySide6 canvas can read it natively
+    return averaged_blur.astype(np.uint8)
+
 
 # =====================================================================
 # INJECT AND INITIALIZE STAGES
 # =====================================================================
 
-fx_bright = BrightnessEffect()
-fx_color = ColorShiftEffect()
-fx_contrast = ContrastEffect()
+fx_bright = fx.BrightnessEffect()
+fx_color = fx.ColorShiftEffect()
+fx_sat = fx.SaturationEffect()
+fx_contrast = fx.ContrastEffect()
+fx_thresh = fx.ThresholdingEffect()
+fx_edge   = fx.EdgeDetectionEffect()
+fx_add = fx.AddEffect()
+fx_blur = fx.DirectionalBlurEffect()
+fx_colormap = fx.ColorMappingEffect()
 
 # 1. Create Linear Processing Chains
-stage_a = PipelineStage("Chain A (Brightness)", standard_linear_processor).add_layers([fx_contrast, fx_bright])
-stage_b = PipelineStage("Chain B (Color Shift)", standard_linear_processor).add_layers([fx_color])
+stage_basic  = PipelineStage("Base effects", standard_linear_processor).add_layers([fx_bright, fx_contrast, fx_color, fx_sat])
+stage_thresh = PipelineStage("Thresholding chain", standard_linear_processor).add_layers([fx_thresh, fx_blur, fx_colormap])
+stage_glitch = PipelineStage("Glitch chain", standard_linear_processor).add_layers([fx_add, fx_bright])
 
 # 2. Create Custom Blender with Exposed Sliders
-stage_merge = PipelineStage("Alpha Cross-Fader", custom_blend_processor).set_inputs(["Chain A (Brightness)", "Chain B (Color Shift)"])
+stage_merge1 = PipelineStage("Merge glitch/thresh", custom_blend_processor).set_inputs(["Thresholding chain", "Glitch chain"])
 # Define structural parameters unique to this specific blending node behavior
-stage_merge.parameters = {"blend_ratio": 50}
-stage_merge.parameters_metadata = {
+stage_merge1.parameters = {"blend_ratio": 50}
+stage_merge1.parameters_metadata = {
     "blend_ratio": {"type": "int", "default": 50, "min": 0, "max": 100}
 }
 
-# 3. Create Custom Temporal Ghosting Node with Exposed Sliders
-stage_echo = PipelineStage("Echo Trail Room", custom_temporal_echo_processor).set_inputs(["Alpha Cross-Fader"])
+# 3. Create Custom Blender with Exposed Sliders
+stage_merge2 = PipelineStage("Merge basic", custom_blend_processor).set_inputs(["Base effects", "Merge glitch/thresh"])
+# Define structural parameters unique to this specific blending node behavior
+stage_merge2.parameters = {"blend_ratio": 50}
+stage_merge2.parameters_metadata = {
+    "blend_ratio": {"type": "int", "default": 50, "min": 0, "max": 100}
+}
+
+# 4. Create Custom Temporal Ghosting Node with Exposed Sliders
+stage_echo = PipelineStage("Echo", custom_temporal_echo_processor).set_inputs(["Merge basic"])
 stage_echo.parameters = {"frame_delay": 5, "echo_mix": 40}
 stage_echo.parameters_metadata = {
     "frame_delay": {"type": "int", "default": 5, "min": 1, "max": 25},
     "echo_mix": {"type": "int", "default": 40, "min": 0, "max": 100}
 }
 
+# 5. Create Custom Temporal Blur with Exposed Sliders
+stage_temporal_blur = PipelineStage("Temporal Blur", custom_temporal_blur_processor).set_inputs(["Echo"])
+stage_temporal_blur.parameters = {"length": 5}
+stage_temporal_blur.parameters_metadata = {
+    "length": {"type": "int", "default": 5, "min": 1, "max": 25}
+}
+
 # Register everything to the engine
 graph_manager = PipelineGraphRegistry()
-graph_manager.add_stage(stage_a)
-graph_manager.add_stage(stage_b)
-graph_manager.add_stage(stage_merge)
+graph_manager.add_stage(stage_basic)
+graph_manager.add_stage(stage_thresh)
+graph_manager.add_stage(stage_glitch)
+graph_manager.add_stage(stage_merge1)
+graph_manager.add_stage(stage_merge2)
 graph_manager.add_stage(stage_echo)
+graph_manager.add_stage(stage_temporal_blur)
 
-graph_manager.set_output_node("Echo Trail Room")
+graph_manager.set_output_node("Temporal Blur")

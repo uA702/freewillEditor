@@ -14,7 +14,6 @@ class BaseEffect:
     def set_paarameter(self, name: str, value):
         if name in self.parameters:
             meta = self.parameters_metadata.get(name, {})
-            # Fix nested dictionary structure evaluation
             if "min" in meta and "max" in meta:
                 value = max(min(value, meta["max"]), meta["min"])
             self.parameters[name] = value
@@ -24,7 +23,6 @@ class BaseEffect:
 
 
 # --- 1 & 2: BRIGHTNESS & BRIGHTNESS WITH OVERFLOW ---
-# Combined into a single class leveraging the override parameter cleanly.
 class BrightnessEffect(BaseEffect):
     def __init__(self):
         super().__init__()
@@ -38,7 +36,9 @@ class BrightnessEffect(BaseEffect):
         override = self.parameters["override_clipping"]
 
         if override:
-            return (frame * factor).astype(np.uint8)
+            # Force intermediate math to float32, then mask to uint8 for overflow art
+            res = (frame.astype(np.float32) * factor).astype(np.int32)
+            return (res & 0xFF).astype(np.uint8)
         else:
             return np.clip(frame * factor, 0, 255).astype(np.uint8)
 
@@ -47,7 +47,7 @@ class BrightnessEffect(BaseEffect):
 class ContrastEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters.update({"contrast": 100})  # 100 = Neutral base
+        self.parameters.update({"contrast": 100})  
         self.parameters_metadata.update({
             "contrast": {"type": "int", "default": 100, "min": 0, "max": 300}
         })
@@ -56,11 +56,11 @@ class ContrastEffect(BaseEffect):
         factor = self.parameters["contrast"] / 100.0
         override = self.parameters["override_clipping"]
         
-        # Adjust values around the mid-tone grayscale boundary center (128)
         result = 128.0 + factor * (frame.astype(np.float32) - 128.0)
         
         if override:
-            return result.astype(np.uint8)
+            # Convert float matrix to int32 before masking out bounds
+            return (result.astype(np.int32) & 0xFF).astype(np.uint8)
         return np.clip(result, 0, 255).astype(np.uint8)
 
 
@@ -77,13 +77,12 @@ class SaturationEffect(BaseEffect):
         factor = self.parameters["saturation"] / 100.0
         override = self.parameters["override_clipping"]
 
-        # Shift to HSV space to scale saturation without breaking luminance channels
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
         hsv[:, :, 1] *= factor
 
         if override:
-            # Force conversion back allowing values to wrap around natively
-            hsv_out = hsv.astype(np.uint8)
+            # Mask the Saturation layer explicitly to avoid conversion errors back to BGR
+            hsv_out = (hsv.astype(np.int32) & 0xFF).astype(np.uint8)
             return cv2.cvtColor(hsv_out, cv2.COLOR_HSV2BGR)
         
         hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
@@ -94,7 +93,7 @@ class SaturationEffect(BaseEffect):
 class ColorTempEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters.update({"temp": 0})  # Negative = Cool (Blue), Positive = Warm (Red)
+        self.parameters.update({"temp": 0})  
         self.parameters_metadata.update({
             "temp": {"type": "int", "default": 0, "min": -100, "max": 100}
         })
@@ -105,14 +104,14 @@ class ColorTempEffect(BaseEffect):
         
         result = frame.astype(np.float32)
         if shift > 0:
-            result[:, :, 2] += shift  # Warm up: Add to Red (OpenCV BGR index 2)
-            result[:, :, 0] -= shift * 0.5  # Sub Blue
+            result[:, :, 2] += shift  
+            result[:, :, 0] -= shift * 0.5  
         else:
-            result[:, :, 0] -= shift  # Cool down: Add to Blue (subtracting negative)
-            result[:, :, 2] += shift * 0.5  # Sub Red
+            result[:, :, 0] -= shift  
+            result[:, :, 2] += shift * 0.5  
 
         if override:
-            return result.astype(np.uint8)
+            return (result.astype(np.int32) & 0xFF).astype(np.uint8)
         return np.clip(result, 0, 255).astype(np.uint8)
 
 
@@ -138,7 +137,8 @@ class ColorShiftEffect(BaseEffect):
         for ch in channels:
             if 0 <= ch < frame.shape[2]:
                 if override:
-                    result[:, :, ch] = (result[:, :, ch] * factor).astype(np.uint8)
+                    res_ch = (result[:, :, ch].astype(np.float32) * factor).astype(np.int32)
+                    result[:, :, ch] = (res_ch & 0xFF).astype(np.uint8)
                 else:
                     result[:, :, ch] = np.clip(result[:, :, ch] * factor, 0, 255).astype(np.uint8)
         return result
@@ -166,13 +166,17 @@ class AddEffect(BaseEffect):
         for ch in channels:
             if 0 <= ch < frame.shape[2]:
                 if override:
-                    result[:, :, ch] += addend  # Force native integer matrix wrapping
+                    # Explicit integer widening prevents python scale boundary errors
+                    res_ch = result[:, :, ch].astype(np.int32) + addend
+                    result[:, :, ch] = (res_ch & 0xFF).astype(np.uint8)
                 else:
                     res_ch = result[:, :, ch].astype(np.int32) + addend
                     result[:, :, ch] = np.clip(res_ch, 0, 255).astype(np.uint8)
-            else: # RGB override 
+            else: 
                 if override:
-                    result += addend  # Force native integer matrix wrapping
+                    # RGB wide matrix calculation
+                    res_mat = result.astype(np.int32) + addend
+                    result = (res_mat & 0xFF).astype(np.uint8)
                 else:
                     res_ch = result.astype(np.int32) + addend
                     result = np.clip(res_ch, 0, 255).astype(np.uint8)
@@ -183,12 +187,9 @@ class AddEffect(BaseEffect):
 class MonochromeEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        # No extra params needed beyond basic base layer configurations
-        pass
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # Re-broadcast back to 3 standard BGR channels to maintain pipeline conformity
         return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
 
@@ -198,9 +199,8 @@ class ColorMappingEffect(BaseEffect):
         super().__init__()
         self.parameters.update({"colormap": 0})
         self.parameters_metadata.update({
-            "colormap": {"type": "int", "default": 0, "min": 0, "max": 11} # Map profiles 0 to 11
+            "colormap": {"type": "int", "default": 0, "min": 0, "max": 11}
         })
-        # Internal reference mapping array lookup parameters
         self.maps = [
             cv2.COLORMAP_AUTUMN, cv2.COLORMAP_BONE, cv2.COLORMAP_JET, 
             cv2.COLORMAP_WINTER, cv2.COLORMAP_RAINBOW, cv2.COLORMAP_OCEAN,
@@ -215,8 +215,8 @@ class ColorMappingEffect(BaseEffect):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         if override:
-            # Shift the base grayscale spectrum values using addition to scramble color maps
-            gray = (gray + 100).astype(np.uint8)
+            res_gray = gray.astype(np.int32) + 100
+            gray = (res_gray & 0xFF).astype(np.uint8)
 
         return cv2.applyColorMap(gray, self.maps[map_idx])
 
@@ -240,13 +240,14 @@ class EdgeDetectionEffect(BaseEffect):
         edges = cv2.Canny(gray, t1, t2)
         
         if override:
-            # Blend raw frames with inverted edges for a distorted glitch effect
-            return (frame + cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)).astype(np.uint8)
+            edge_bgr = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR).astype(np.int32)
+            res = frame.astype(np.int32) + edge_bgr
+            return (res & 0xFF).astype(np.uint8)
             
         return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
 
 
-# --- 11: THRESHOLDING (BINARY BINARIZATION) ---
+# --- 11: THRESHOLDING ---
 class ThresholdingEffect(BaseEffect):
     def __init__(self):
         super().__init__()
@@ -262,9 +263,8 @@ class ThresholdingEffect(BaseEffect):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         if override:
-            # Custom modular math mapping instead of straight threshold cuts
-            res_gray = (gray // (val + 1)) * 50
-            return cv2.cvtColor(res_gray.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+            res_gray = (gray.astype(np.int32) // (val + 1)) * 50
+            return cv2.cvtColor((res_gray & 0xFF).astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
         _, binary = cv2.threshold(gray, val, 255, cv2.THRESH_BINARY)
         return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
@@ -274,7 +274,7 @@ class ThresholdingEffect(BaseEffect):
 class DirectionalBlurEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters.update({"blur_u": 1, "blur_v": 1}) # Horizontal (U) / Vertical (V)
+        self.parameters.update({"blur_u": 1, "blur_v": 1}) 
         self.parameters_metadata.update({
             "blur_u": {"type": "int", "default": 1, "min": 1, "max": 100},
             "blur_v": {"type": "int", "default": 1, "min": 1, "max": 100}
@@ -285,18 +285,17 @@ class DirectionalBlurEffect(BaseEffect):
         v_size = self.parameters["blur_v"]
         override = self.parameters["override_clipping"]
 
-        # Ensure values are odd numbers for box filter kernels
         if u_size % 2 == 0: 
             u_size += 1
         if v_size % 2 == 0: 
             v_size += 1
 
         if override:
-            # Build an unstable directional delta matrix kernel that does not sum to 1
             kernel = np.ones((v_size, u_size), np.float32) * 2.0
-            return cv2.filter2D(frame, -1, kernel)
+            # filter2D handles internal float accumulation safely, but we cast out bounds cleanly here
+            res = cv2.filter2D(frame.astype(np.float32), -1, kernel).astype(np.int32)
+            return (res & 0xFF).astype(np.uint8)
             
-        # Normal, normalized directional blurring filter layout
         kernel = np.zeros((v_size, u_size), np.float32)
         if u_size >= v_size:
             kernel[v_size // 2, :] = 1.0 / u_size
