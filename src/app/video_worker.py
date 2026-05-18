@@ -81,35 +81,36 @@ class VideoWorker(QThread):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     def export_video(self, output_path):
-        """Processes frames via OpenCV, then merges the original video's audio track back in."""
+        """Reads, processes, and writes every video frame out to disk using the graph manager."""
+        import cv2
+        
         if not self.cap or not self.cap.isOpened():
             self.export_finished.emit(False)
             return
 
-        # Live webcam check guard
+        # Guard: Cannot export a live webcam input device stream
         if isinstance(self.video_path, int):
-            print("Export cancelled: Cannot export a live webcam input device.")
+            print("Export cancelled: Cannot export a live input device stream.")
             self.export_finished.emit(False)
             return
 
-        # 1. Setup temporary file location for the silent processed video
-        base, ext = os.path.splitext(output_path)
-        temp_output_path = f"{base}_temp_silent{ext}"
-
-        # 2. Gather raw video properties
+        # 1. Gather raw video properties for the writer setup
         width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = self.cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0: 
-            total_frames = 1
-
-        # Open dedicated capture context for rendering
-        export_cap = cv2.VideoCapture(self.video_path)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         
-        # Write to our TEMP silent file first
-        writer = cv2.VideoWriter(temp_output_path, fourcc, fps, (width, height))
+        if total_frames <= 0:
+            total_frames = 1 # Prevent divide-by-zero errors
+
+        # 2. Open a separate video capture reader specifically for the export process
+        # (This avoids messing up the frame position of the live playback thread)
+        export_cap = cv2.VideoCapture(self.video_path)
+        
+        # 3. Initialize the OpenCV VideoWriter 
+        # (Using MP4V encoding for high compatibility with standard .mp4 extensions)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         if not writer.isOpened():
             export_cap.release()
@@ -119,81 +120,35 @@ class VideoWorker(QThread):
         frame_idx = 0
         success = True
 
-        # --- STAGE 1: Process and render the visual frames ---
         try:
             while True:
                 ret, frame = export_cap.read()
                 if not ret:
                     break
 
-                # Run through the entire mixed glitch channel registry graph
+                # Run the frame through the entire dependency graph up to your chosen node
                 processed = self.registry.execute_graph(frame)
                 
-                # Convert 4-channel alpha layers to standard 3-channel BGR for container writing
+                # Drop Alpha transparency channel if it exists before saving 
+                # (Standard MP4 video files only support 3-channel BGR layouts)
                 if processed.shape[2] == 4:
                     processed = cv2.cvtColor(processed, cv2.COLOR_BGRA2BGR)
 
+                # 4. Write the processed glitch matrix frame to file
                 writer.write(processed)
                 
+                # 5. Broadcast rendering update signals to drive the UI progress bar
                 frame_idx += 1
-                # Allocate 85% of the overall progress track bar to the raw video computation loop
-                self.export_progress.emit(int((frame_idx / total_frames) * 85), 100)
+                self.export_progress.emit(frame_idx, total_frames)
 
         except Exception as e:
-            print(f"Visual Rendering Error: {e}")
+            print(f"Export Error encountered: {e}")
             success = False
         finally:
+            # 6. Clean up resources and close files cleanly
             export_cap.release()
             writer.release()
-
-        # --- STAGE 2: Audio Track Extraction and Merging Pipeline ---
-        if success:
-            try:
-                # Signal text or update bar to let users know we are multiplexing audio layers
-                self.export_progress.emit(90, 100)
-                
-                # Load the newly generated silent visual clip and the original audio-carrying file
-                processed_visual_clip = VideoFileClip(temp_output_path)
-                original_source_clip = VideoFileClip(self.video_path)
-                
-                if original_source_clip.audio is not None:
-                    # Bind the pristine audio track straight to your glitch visual sequence
-                    final_merged_output = processed_visual_clip.set_audio(original_source_clip.audio)
-                    
-                    # Write out the complete final file container
-                    final_merged_output.write_videofile(
-                        output_path,
-                        codec="libx264",
-                        audio_codec="aac",
-                        logger=None # Suppresses massive text spam in your Python terminal window
-                    )
-                    
-                    # Close handlers to drop file system access locks
-                    final_merged_output.close()
-                else:
-                    # Fallback if original asset has no native soundtrack data
-                    processed_visual_clip.close()
-                    if os.path.exists(output_path): 
-                        os.remove(output_path)
-                    os.rename(temp_output_path, output_path)
-                    
-                original_source_clip.close()
-                processed_visual_clip.close()
-
-            except Exception as audio_err:
-                print(f"Audio Multiplex Muxing Error: {audio_err}")
-                success = False
-            finally:
-                # Clean up and discard the intermediate temporary file asset safely
-                if os.path.exists(temp_output_path):
-                    try:
-                        os.remove(temp_output_path)
-                    except Exception:
-                        pass
-
-        # Complete track bar feedback signal and emit final execution completion status back to main window UI
-        self.export_progress.emit(100 if success else 0, 100)
-        self.export_finished.emit(success)
+            self.export_finished.emit(success)
 
     def __del__(self):
         if self.cap:
