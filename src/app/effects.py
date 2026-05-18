@@ -21,7 +21,7 @@ class BaseEffect:
 # =====================================================================
 # 1. NATIVELY NEUTRALIZABLE EFFECTS (With clipping override support)
 # =====================================================================
-
+    
 class BrightnessEffect(BaseEffect):
     def __init__(self):
         super().__init__()
@@ -135,6 +135,18 @@ class AddEffect(BaseEffect):
 # =====================================================================
 # 2. TOGGLE-DEPENDENT EFFECTS (Require explicit bypass logic)
 # =====================================================================
+class InvertEffect(BaseEffect):
+    def __init__(self):
+        super().__init__()
+        self.parameters = {"enabled": False}
+        self.parameters_metadata = {
+            "enabled": {"type": "bool", "default": False}
+        }
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        if not self.parameters.get("enabled", True):
+            return frame
+        return (255 - frame).astype(np.uint8)
 
 class MonochromeEffect(BaseEffect):
     def __init__(self):

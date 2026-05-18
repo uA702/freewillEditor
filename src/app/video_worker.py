@@ -47,9 +47,17 @@ class VideoWorker(QThread):
             start_time = time.perf_counter_ns()
             ret, frame = self.cap.read()
             if not ret:
-                self.video_ended.emit()
-                self.running = False
-                break
+                # If we are streaming a live webcam (integer device), a bad frame 
+                # means a hardware glitch/disconnect, so we break out.
+                if isinstance(self.video_path, int):
+                    break
+                # Otherwise, it's a file! Rewind the video reader back to frame index 0
+                self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                # Attempt to read the very first frame immediately so the pipeline doesn't skip a beat
+                ret, frame = self.cap.read()
+                if not ret:
+                    # Safety fallback: If it still fails, the file might be corrupted or closed
+                    break
 
             # Route the frame through the globally active stage layout
             processed = self.registry.execute_graph(frame)
