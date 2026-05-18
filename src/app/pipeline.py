@@ -16,7 +16,7 @@ class PipelineStage:
         self.inputs: List[str] = []
         
         # Linear layer children (if this stage hosts standard base effects)
-        self.layers: List[BaseEffect] = []
+        self.layers: List[fx.BaseEffect] = []
         
         # Dedicated Node Parameters (Exposes custom sliders for blends, echoes, weights, etc.)
         self.parameters: Dict[str, Any] = {}
@@ -30,7 +30,7 @@ class PipelineStage:
         self.inputs = input_stage_names
         return self
 
-    def add_layers(self, layers: List[BaseEffect]):
+    def add_layers(self, layers: List[fx.BaseEffect]):
         self.layers.extend(layers)
         return self
 

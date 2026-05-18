@@ -154,9 +154,13 @@ class MonochromeEffect(BaseEffect):
 class ColorShiftEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": False, "shift_x": 0, "shift_y": 0}
+        self.parameters = {"enabled": False, 
+                           "channel": 0,
+                           "shift_x": 0, 
+                           "shift_y": 0}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
+            "channel": {"type": "int", "default": 0, "min": 0, "max": 3},
             "shift_x": {"type": "int", "default": 0, "min": -100, "max": 100},
             "shift_y": {"type": "int", "default": 0, "min": -100, "max": 100}
         }
@@ -168,14 +172,25 @@ class ColorShiftEffect(BaseEffect):
         sx, sy = self.parameters["shift_x"], self.parameters["shift_y"]
         if sx == 0 and sy == 0:
             return frame
-            
+        
         rows, cols, _ = frame.shape
         matrix = np.float32([[1, 0, sx], [0, 1, sy]])
-        
         b, g, r = cv2.split(frame)
-        b_shifted = cv2.warpAffine(b, matrix, (cols, rows))
-        return cv2.merge([b_shifted, g, r])
 
+        channel = self.parameters["channel"]
+        if channel == 0: # Override RGB
+            b_shifted = cv2.warpAffine(b, matrix, (cols, rows))
+            return cv2.merge([b_shifted, g, r])
+        elif channel == 1: # Override RGB
+            g_shifted = cv2.warpAffine(g, matrix, (cols, rows))
+            return cv2.merge([b, g_shifted, r])
+        elif channel == 2: # Override RGB
+            r_shifted = cv2.warpAffine(r, matrix, (cols, rows))
+            return cv2.merge([b, g, r_shifted])
+        elif channel == 3: # Override RGB
+            return cv2.warpAffine(frame, matrix, (cols, rows))
+        else:
+            return frame
 
 class EdgeDetectionEffect(BaseEffect):
     def __init__(self):
