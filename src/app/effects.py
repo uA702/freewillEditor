@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import cmapy
 
 class BaseEffect:
     """Abstract base class for all frame-processing pipeline layers."""
@@ -244,26 +245,152 @@ class ThresholdingEffect(BaseEffect):
 class ColorMappingEffect(BaseEffect):
     def __init__(self):
         super().__init__()
-        self.parameters = {"enabled": False, "colormap_idx": 2}
+        
+        # 1. Full Core OpenCV Colormap Catalog (Preserving all variants explicitly)
+        self.native_maps = {
+            "Autumn (OpenCV)": cv2.COLORMAP_AUTUMN,
+            "Bone (OpenCV)": cv2.COLORMAP_BONE,
+            "Jet (OpenCV)": cv2.COLORMAP_JET,
+            "Winter (OpenCV)": cv2.COLORMAP_WINTER,
+            "Rainbow (OpenCV)": cv2.COLORMAP_RAINBOW,
+            "Ocean (OpenCV)": cv2.COLORMAP_OCEAN,
+            "Summer (OpenCV)": cv2.COLORMAP_SUMMER,
+            "Spring (OpenCV)": cv2.COLORMAP_SPRING,
+            "Cool (OpenCV)": cv2.COLORMAP_COOL,
+            "HSV (OpenCV)": cv2.COLORMAP_HSV,
+            "Pink (OpenCV)": cv2.COLORMAP_PINK,
+            "Hot (OpenCV)": cv2.COLORMAP_HOT,
+            "Parula (OpenCV)": cv2.COLORMAP_PARULA,
+            "Magma (OpenCV)": cv2.COLORMAP_MAGMA,
+            "Inferno (OpenCV)": cv2.COLORMAP_INFERNO,
+            "Plasma (OpenCV)": cv2.COLORMAP_PLASMA,
+            "Viridis (OpenCV)": cv2.COLORMAP_VIRIDIS,
+            "Cividis (OpenCV)": cv2.COLORMAP_CIVIDIS,
+            "Twilight (OpenCV)": cv2.COLORMAP_TWILIGHT,
+            "Twilight_Shifted (OpenCV)": cv2.COLORMAP_TWILIGHT_SHIFTED,
+            "Turbo (OpenCV)": cv2.COLORMAP_TURBO,
+            "Deepgreen (OpenCV)": cv2.COLORMAP_DEEPGREEN
+        }
+
+        # 2. Categorized Matplotlib groups array map structure
+        cmap_groups = [
+            {
+                "name": "Perceptually Uniform Sequential",
+                "colormaps": ["viridis", "plasma", "inferno", "magma", "cividis"],
+            },
+            {
+                "name": "Sequential",
+                "colormaps": [
+                    "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds", "YlOrBr",
+                    "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu", "GnBu", "PuBu", "YlGnBu",
+                    "PuBuGn", "BuGn", "YlGn",
+                ],
+            },
+            {
+                "name": "Sequential (2)",
+                "colormaps": [
+                    "binary", "gist_yarg", "gist_gray", "gray", "bone", "pink", "spring",
+                    "summer", "autumn", "winter", "cool", "Wistia", "hot", "afmhot",
+                    "gist_heat", "copper",
+                ],
+            },
+            {
+                "name": "Diverging",
+                "colormaps": [
+                    "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu", "RdYlBu", "RdYlGn",
+                    "Spectral", "coolwarm", "bwr", "seismic",
+                ],
+            },
+            {
+                "name": "Cyclic",
+                "colormaps": ["twilight", "twilight_shifted"],
+            },
+            {
+                "name": "Qualitative",
+                "colormaps": [
+                    "Pastel1", "Pastel2", "Paired", "Accent", "Dark2", "Set1", "Set2",
+                    "Set3", "tab10", "tab20", "tab20b", "tab20c",
+                ],
+            },
+            {
+                "name": "Miscellaneous",
+                "colormaps": [
+                    "flag", "prism", "ocean", "gist_earth", "terrain", "gist_stern",
+                    "gnuplot", "gnuplot2", "CMRmap", "cubehelix", "brg", "hsv",
+                    "gist_rainbow", "rainbow", "jet", "nipy_spectral", "gist_ncar", "turbo",
+                ],
+            },
+        ]
+
+        # 3. Assemble complete list with explicit labeling to ensure both versions coexist
+        dropdown_options = list(self.native_maps.keys())
+        for group in cmap_groups:
+            for cmap in group["colormaps"]:
+                dropdown_options.append(f"{cmap} (Cmapy)")
+                
+        dropdown_options.append("Custom Terminal (LUT)")
+
+        self.parameters = {"enabled": False, "colormap_name": "Viridis (OpenCV)"}
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "colormap_idx": {"type": "int", "default": 2, "min": 0, "max": 11}
+            "colormap_name": {
+                "type": "str_choice", 
+                "default": "Viridis (OpenCV)", 
+                "choices": dropdown_options
+            }
         }
-        self.maps = [
-            cv2.COLORMAP_AUTUMN, cv2.COLORMAP_BONE, cv2.COLORMAP_JET, 
-            cv2.COLORMAP_WINTER, cv2.COLORMAP_RAINBOW, cv2.COLORMAP_OCEAN,
-            cv2.COLORMAP_SUMMER, cv2.COLORMAP_SPRING, cv2.COLORMAP_COOL, 
-            cv2.COLORMAP_HOT, cv2.COLORMAP_PINK, cv2.COLORMAP_PARULA
-        ]
+
+    def _generate_terminal_lut(self) -> np.ndarray:
+        lut = np.zeros((1, 256, 3), dtype=np.uint8)
+        
+        # Adjust this to change where the "black threshold" cutoff finishes
+        # Higher values shift the cutoff further into the brighter values
+        threshold_cutoff1 = 256.0-64.0 
+        threshold_cutoff2 = 64.0 
+        
+        for i in range(256):
+            # 1. Base Color Generation (BGR Order)
+            # To make a bright pink: Red is maxed out, Green is lower, Blue is medium-high
+            r = i/2 + 128
+            b = 0
+            g = 255 - i/2
+
+            # 2. Corrected Exponential Threshold Equation
+            # Dividing 'i' by our cutoff spreads the curve across a visible range
+            factor1 = 1.0 - np.exp(-((i / threshold_cutoff1)**2))
+            factor2 = np.exp(-((i / threshold_cutoff2)**2))
+
+            # 3. Apply the threshold factor and clamp safely between 0-255
+            lut[0, i] = [
+                np.clip(b, 0, 255).astype(np.uint8),  # Blue
+                np.clip(g * factor2, 0, 255).astype(np.uint8),  # Green
+                np.clip(r * factor1, 0, 255).astype(np.uint8)   # Red
+            ]
+            
+        return lut
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
         if not self.parameters.get("enabled", True):
             return frame
             
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        idx = np.clip(self.parameters["colormap_idx"], 0, len(self.maps) - 1)
-        return cv2.applyColorMap(gray, self.maps[idx])
+        chosen_map = self.parameters.get("colormap_name", "Viridis (OpenCV)")
 
+        # Route A: Match Core Explicit OpenCV Options
+        if chosen_map in self.native_maps:
+            return cv2.applyColorMap(gray, self.native_maps[chosen_map])
+            
+        # Route B: Parse Matplotlib names inside cmapy
+        elif "Cmapy" in chosen_map:
+            cmap_id = chosen_map.split(" ")[0]
+            return cv2.applyColorMap(gray, cmapy.cmap(cmap_id))
+
+        # Route C: Look Up Tables
+        elif chosen_map == "Custom Terminal (LUT)":
+            custom_lut = self._generate_terminal_lut()
+            return cv2.LUT(cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR), custom_lut)
+
+        return frame
 
 class LocalBlurEffect(BaseEffect):
     def __init__(self):

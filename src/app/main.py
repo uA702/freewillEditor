@@ -270,6 +270,23 @@ class VideoEditorApp(QMainWindow):
                     checkbox.setChecked(layer.parameters[param])
                     checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_parameter(p, state == 2))
                     self.sliders_layout.addWidget(checkbox)
+                
+                # Place this directly alongside your "if meta.get('type') == 'int':" blocks inside generate_effect_sliders:
+
+                elif meta.get("type") == "str_choice":
+                    # Generate label layout block 
+                    self.sliders_layout.addWidget(QLabel(f"      {param}:"))
+                    
+                    # Instantiate dropdown box widget layout element
+                    dropdown = QComboBox()
+                    dropdown.addItems(meta.get("choices", []))
+                    dropdown.setCurrentText(layer.parameters[param])
+                    dropdown.setStyleSheet("background-color: #222; color: #FFF; border: 1px solid #444; padding: 4px; border-radius: 3px;")
+                    
+                    # Connect change trigger signal to update the engine string state directly 
+                    dropdown.currentTextChanged.connect(lambda text, l=layer, p=param: l.set_parameter(p, text))
+                    
+                    self.sliders_layout.addWidget(dropdown)
         
         self.sliders_layout.addStretch()
 

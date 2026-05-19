@@ -1,4 +1,5 @@
 opencv-python
 numpy
 pyside6
-moviepy
+cmapy
+matplotlib

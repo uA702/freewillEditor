@@ -4,4 +4,5 @@ Version: 0.1.0
 Requires-Dist: opencv-python
 Requires-Dist: numpy
 Requires-Dist: pyside6
-Requires-Dist: moviepy
+Requires-Dist: cmapy
+Requires-Dist: matplotlib
