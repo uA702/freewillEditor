@@ -106,13 +106,11 @@ def custom_blend_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[st
     
     return cv2.addWeighted(img_a, weight_percent, img_b, 1.0 - weight_percent, 0)
 
-# --- Custom Behavior 5: Multi-Channel Audio-Style Video Mixer Console ---
 def custom_multi_mixer_processor(node: PipelineStage, frame: np.ndarray, deps: Dict[str, np.ndarray]) -> np.ndarray:
     if not node.inputs: 
         return frame.copy()
     
     # 1. Dynamically sync parameters and metadata based on current inputs
-    # If a new input connection is detected, generate a matching slider (0-100%)
     for input_name in node.inputs:
         param_key = f"volume_{input_name}"
         if param_key not in node.parameters:
@@ -121,37 +119,88 @@ def custom_multi_mixer_processor(node: PipelineStage, frame: np.ndarray, deps: D
                 "type": "int", "default": 50, "min": 0, "max": 100
             }
 
-    # 2. Initialize an empty floating point canvas for compounding track layers
-    h, w, c = frame.shape
-    mixed_canvas = np.zeros((h, w, c), dtype=np.float32)
-    total_weight = 0.0
+    # 2. Start with a solid, clean base canvas (forced 4-channel BGRA to support transparency)
+    h, w, _ = frame.shape
+    mixed_canvas = np.zeros((h, w, 4), dtype=np.float32)
+    
+    # Track if *any* transparency or alpha keying is actually happening in this stack
+    alpha_composited_any = False
 
-    # 3. Accumulate every track based on its active slider "volume"
+    # 3. Process and composite every incoming track
     for input_name in node.inputs:
-        if input_name in deps:
-            track_frame = deps[input_name].astype(np.float32)
-            volume = node.parameters.get(f"volume_{input_name}", 50) / 100.0
+        if input_name not in deps:
+            continue
             
-            mixed_canvas += track_frame * volume
-            total_weight += volume
+        volume = node.parameters.get(f"volume_{input_name}", 50) / 100.0
+        track_frame = deps[input_name].copy()
+        
+        # Check if this track is outputting transparency (4 channels)
+        if track_frame.shape[2] == 4:
+            alpha_composited_any = True
+            track_fg = track_frame[:, :, :3].astype(np.float32)
+            # Normalize alpha mask to 0.0 - 1.0 range, then apply track volume
+            track_alpha = (track_frame[:, :, 3].astype(np.float32) / 255.0) * volume
+        else:
+            # Standard 3-channel track gets a full-screen solid alpha mask
+            track_fg = track_frame.astype(np.float32)
+            track_alpha = np.ones((h, w), dtype=np.float32) * volume
 
-    # 4. Normalize the mix to avoid unintended blowouts (unless override is on!)
-    # We check a global configuration or use the frame's upstream clipping context
-    # For a mixer console, normalizing by total weight keeps the image exposure balanced.
-    if total_weight > 0.0:
-        mixed_canvas /= total_weight
+        # --- ALPHA COMPOSITING (Photoshop Over-Blending Math) ---
+        # Reshape alpha for broadcasting: (H, W, 1)
+        track_alpha_3d = np.expand_dims(track_alpha, axis=2)
+        
+        # Isolate the current canvas background color and alpha
+        bg_rgb = mixed_canvas[:, :, :3]
+        bg_alpha = np.expand_dims(mixed_canvas[:, :, 3], axis=2)
+        
+        # Compute new alpha layer depth
+        out_alpha = track_alpha_3d + bg_alpha * (1.0 - track_alpha_3d)
+        
+        # Blend the color channels based on the track's alpha transparency mask
+        # Guard against zero-division for completely vacant pixels
+        with np.errstate(invalid='ignore', divide='ignore'):
+            out_rgb = (track_fg * track_alpha_3d + bg_rgb * bg_alpha * (1.0 - track_alpha_3d)) / np.where(out_alpha == 0, 1.0, out_alpha)
+        
+        # Save back onto our rolling composite canvas
+        mixed_canvas[:, :, :3] = out_rgb
+        mixed_canvas[:, :, 3] = np.squeeze(out_alpha)
 
-    # 5. Output rendering with your requested overflow glitch compatibility
-    # If you want to allow individual channel volumes to glitch past 255, 
-    # we cast to int32 and execute the 0xFF mask.
-    # (Checking against any parent stage's override, or a local parameter)
-    res_int = mixed_canvas.astype(np.int32)
-    return (res_int & 0xFF).astype(np.uint8)
+    # 4. Final Render & Display Engine Compatibility Guard
+    if alpha_composited_any:
+        # If any transparency was used, the unmasked pixels must be forced to a background color
+        # (e.g., Solid Black) so that UI windows display them as "disappeared".
+        final_rgb = mixed_canvas[:, :, :3]
+        final_alpha = np.expand_dims(mixed_canvas[:, :, 3], axis=2)
+        
+        # Render over a solid black background
+        rendered_canvas = final_rgb * final_alpha
+        
+        # Optional glitch pass (0xFF wrap compatibility)
+        res_int = rendered_canvas.astype(np.int32)
+        return (res_int & 0xFF).astype(np.uint8)
+    else:
+        # Fallback: No tracks have transparency, treat like a standard linear mixer
+        # We manually process it as standard BGR so weights don't drop exposure.
+        fallback_canvas = np.zeros((h, w, 3), dtype=np.float32)
+        total_weight = 0.0
+        
+        for input_name in node.inputs:
+            if input_name in deps:
+                volume = node.parameters.get(f"volume_{input_name}", 50) / 100.0
+                fallback_canvas += deps[input_name][:, :, :3].astype(np.float32) * volume
+                total_weight += volume
+                
+        if total_weight > 0.0:
+            fallback_canvas /= total_weight
+            
+        res_int = fallback_canvas.astype(np.int32)
+        return (res_int & 0xFF).astype(np.uint8)
 
 # =====================================================================
 # 1. INITIALIZE MASTER EFFECT LAYERS (USING THE 'fx.' NAMESPACE)
 # =====================================================================
 # --- Channel 1 Layers ---
+fx_b1_thresh   = fx.ThresholdingEffect()
 fx_b1_bright   = fx.BrightnessEffect()
 fx_b1_contrast = fx.ContrastEffect()
 fx_b1_sat      = fx.SaturationEffect()
@@ -165,6 +214,7 @@ fx_b1_tblur    = fx.LocalTemporalBlurEffect()
 fx_b1_roi      = fx.ROIEffect()
 
 # --- Channel 2 Layers ---
+fx_b2_thresh   = fx.ThresholdingEffect()
 fx_b2_bright   = fx.BrightnessEffect()
 fx_b2_contrast = fx.ContrastEffect()
 fx_b2_sat      = fx.SaturationEffect()
@@ -172,33 +222,33 @@ fx_b2_temp     = fx.ColorTempEffect()
 fx_b2_add      = fx.AddEffect()
 fx_b2_cshift   = fx.ColorShiftEffect()
 fx_b2_invert   = fx.InvertEffect()
-fx_b2_blur     = fx.LocalBlurEffect()
+fx_b2_blur = fx.LocalBlurEffect()
 fx_b2_echo     = fx.LocalEchoEffect()
 fx_b2_tblur    = fx.LocalTemporalBlurEffect()
 fx_b2_roi      = fx.ROIEffect()
 
 # --- Channel 3 Layers ---
+fx_m1_thresh   = fx.ThresholdingEffect()
+fx_m1_edges    = fx.EdgeDetectionEffect()
 fx_m1_mono     = fx.MonochromeEffect()
 fx_m1_bright   = fx.BrightnessEffect()
 fx_m1_contrast = fx.ContrastEffect()
-fx_m1_edges    = fx.EdgeDetectionEffect()
-fx_m1_thresh   = fx.ThresholdingEffect()
 fx_m1_invert   = fx.InvertEffect()
 fx_m1_cmap     = fx.ColorMappingEffect()
-fx_m1_blur     = fx.LocalBlurEffect() 
+fx_m1_blur = fx.LocalBlurEffect()
 fx_m1_echo     = fx.LocalEchoEffect()
-fx_m1_tblur    = fx.LocalTemporalBlurEffect()
+fx_m1_tblur    = fx.LocalTemporalBlurEffect() 
 fx_m1_roi      = fx.ROIEffect()
 
 # --- Channel 4 Layers ---
+fx_m2_thresh   = fx.ThresholdingEffect()
+fx_m2_edges    = fx.EdgeDetectionEffect()
 fx_m2_mono     = fx.MonochromeEffect()
 fx_m2_bright   = fx.BrightnessEffect()
 fx_m2_contrast = fx.ContrastEffect()
-fx_m2_edges    = fx.EdgeDetectionEffect()
-fx_m2_thresh   = fx.ThresholdingEffect()
 fx_m2_invert   = fx.InvertEffect()
 fx_m2_cmap     = fx.ColorMappingEffect()
-fx_m2_blur     = fx.LocalBlurEffect()
+fx_m2_blur = fx.LocalBlurEffect()
 fx_m2_echo     = fx.LocalEchoEffect()
 fx_m2_tblur    = fx.LocalTemporalBlurEffect()
 fx_m2_roi      = fx.ROIEffect()
@@ -221,26 +271,30 @@ fx_post_tblur    = fx.LocalTemporalBlurEffect()
 # --- MASTER STAGE 1: BASIC CHANNEL 1 ---
 stage_channel_1 = PipelineStage("Channel 1: Basic Alpha", standard_linear_processor)
 stage_channel_1.add_layers([
+    fx_b1_thresh, 
     fx_b1_bright, fx_b1_contrast, fx_b1_sat, 
     fx_b1_temp, fx_b1_cshift, fx_b1_add, fx_b1_invert,
-    fx_b1_blur, fx_b1_echo, fx_b1_tblur,
+    fx_b1_blur, fx_b1_echo, fx_b1_tblur, 
     fx_b1_roi
 ])
 
 # --- MASTER STAGE 2: BASIC CHANNEL 2 ---
 stage_channel_2 = PipelineStage("Channel 2: Basic Beta", standard_linear_processor)
 stage_channel_2.add_layers([
+    fx_b2_thresh, 
     fx_b2_bright, fx_b2_contrast, fx_b2_sat, 
     fx_b2_temp, fx_b2_cshift, fx_b2_add, fx_b2_invert,
-    fx_b2_blur, fx_b2_echo, fx_b2_tblur,
+    fx_b2_echo, fx_b2_tblur,
     fx_b2_roi
 ])
 
 # --- MASTER STAGE 3: MONOCHROME CHANNEL 1 ---
 stage_channel_3 = PipelineStage("Channel 3: Mono Glitch Alpha", standard_linear_processor)
 stage_channel_3.add_layers([
-    fx_m1_mono, fx_m1_thresh, fx_m1_edges, fx_m1_invert,
-    fx_m1_blur, fx_m1_bright, fx_m1_contrast,
+    fx_m1_mono, fx_m1_invert,
+    fx_m1_bright, fx_m1_contrast,
+    fx_m1_thresh, fx_m1_edges, 
+    fx_m1_blur, 
     fx_m1_echo, fx_m1_tblur, 
     fx_m1_cmap, fx_m1_roi
 ])
@@ -248,9 +302,11 @@ stage_channel_3.add_layers([
 # --- MASTER STAGE 4: MONOCHROME CHANNEL 2 ---
 stage_channel_4 = PipelineStage("Channel 4: Mono Glitch Beta", standard_linear_processor)
 stage_channel_4.add_layers([
-    fx_m2_mono, fx_m2_thresh, fx_m2_edges, fx_m2_invert,
-    fx_m2_blur, fx_m2_bright, fx_m2_contrast,
-    fx_m2_echo, fx_m2_tblur,
+    fx_m2_mono, fx_m2_invert,
+    fx_m2_bright, fx_m2_contrast,
+    fx_m2_thresh, fx_m2_edges, 
+    fx_m2_blur, 
+    fx_m2_echo, fx_m2_tblur, 
     fx_m2_cmap, fx_m2_roi
 ])
 

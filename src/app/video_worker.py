@@ -62,10 +62,20 @@ class VideoWorker(QThread):
             # Route the frame through the globally active stage layout
             processed = self.registry.execute_graph(frame)
 
-            rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-            q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            # Detect channels dynamically
+            if frame.shape[2] == 4:
+                # Frame is BGRA (Transparency Active)
+                rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGRA2RGBA)
+                h, w, ch = rgb_frame.shape
+                bytes_per_line = ch * w
+                q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGBA8888)
+            else:
+                # Frame is standard BGR (Opaque)
+                rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_frame.shape
+                bytes_per_line = ch * w
+                q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
             self.frame_processed.emit(q_img.copy())
 
             elapsed_ms = (time.perf_counter_ns() - start_time) / 1000000
