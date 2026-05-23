@@ -1,5 +1,6 @@
 import cv2
 import time
+import numpy as np
 import os
 from moviepy.video.io.VideoFileClip import VideoFileClip
 from PySide6.QtCore import QThread, Signal
@@ -62,20 +63,27 @@ class VideoWorker(QThread):
             # Route the frame through the globally active stage layout
             processed = self.registry.execute_graph(frame)
 
-            # Detect channels dynamically
-            if frame.shape[2] == 4:
-                # Frame is BGRA (Transparency Active)
-                rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGRA2RGBA)
-                h, w, ch = rgb_frame.shape
-                bytes_per_line = ch * w
-                q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGBA8888)
-            else:
-                # Frame is standard BGR (Opaque)
-                rgb_frame = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_frame.shape
-                bytes_per_line = ch * w
-                q_img = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+            if processed is not None:
+                # GLOBAL DISPLAY BLENDING GUARD:
+                # If the active stage is outputting transparency data, collapse it over 
+                # a solid background color so the UI window displays the mask correctly!
+                if len(processed.shape) == 3 and processed.shape[2] == 4:
+                    color_data = processed[:, :, :3].astype(np.float32)
+                    alpha_channel = processed[:, :, 3].astype(np.float32) / 255.0
+                    alpha_3d = np.expand_dims(alpha_channel, axis=2)
+                    
+                    # Blend over a solid background (e.g., Solid Black)
+                    bg = np.zeros_like(color_data) 
+                    display_frame = (color_data * alpha_3d + bg * (1.0 - alpha_3d)).astype(np.uint8)
+                else:
+                    display_frame = processed
 
+            # Proceed with your standard QImage conversion using display_frame instead of processed
+            h, w, c = display_frame.shape
+            bytes_per_line = c * w
+            format_type = QImage.Format_BGR888 if c == 3 else QImage.Format_RGBA8888
+            
+            q_img = QImage(display_frame.data, w, h, bytes_per_line, format_type)
             self.frame_processed.emit(q_img.copy())
 
             elapsed_ms = (time.perf_counter_ns() - start_time) / 1000000

@@ -222,7 +222,7 @@ fx_b2_temp     = fx.ColorTempEffect()
 fx_b2_add      = fx.AddEffect()
 fx_b2_cshift   = fx.ColorShiftEffect()
 fx_b2_invert   = fx.InvertEffect()
-fx_b2_blur = fx.LocalBlurEffect()
+fx_b2_blur     = fx.LocalBlurEffect()
 fx_b2_echo     = fx.LocalEchoEffect()
 fx_b2_tblur    = fx.LocalTemporalBlurEffect()
 fx_b2_roi      = fx.ROIEffect()
@@ -235,7 +235,7 @@ fx_m1_bright   = fx.BrightnessEffect()
 fx_m1_contrast = fx.ContrastEffect()
 fx_m1_invert   = fx.InvertEffect()
 fx_m1_cmap     = fx.ColorMappingEffect()
-fx_m1_blur = fx.LocalBlurEffect()
+fx_m1_blur     = fx.LocalBlurEffect()
 fx_m1_echo     = fx.LocalEchoEffect()
 fx_m1_tblur    = fx.LocalTemporalBlurEffect() 
 fx_m1_roi      = fx.ROIEffect()
@@ -248,7 +248,7 @@ fx_m2_bright   = fx.BrightnessEffect()
 fx_m2_contrast = fx.ContrastEffect()
 fx_m2_invert   = fx.InvertEffect()
 fx_m2_cmap     = fx.ColorMappingEffect()
-fx_m2_blur = fx.LocalBlurEffect()
+fx_m2_blur     = fx.LocalBlurEffect()
 fx_m2_echo     = fx.LocalEchoEffect()
 fx_m2_tblur    = fx.LocalTemporalBlurEffect()
 fx_m2_roi      = fx.ROIEffect()
@@ -262,6 +262,8 @@ fx_post_add      = fx.AddEffect()
 fx_post_blur     = fx.LocalBlurEffect()
 fx_post_echo     = fx.LocalEchoEffect()
 fx_post_tblur    = fx.LocalTemporalBlurEffect()
+fx_post_features = fx.FeatureClusterTrackerEffect()
+fx_post_analog   = fx.AnalogSyncGlitchEffect()
 
 
 # =====================================================================
@@ -345,7 +347,7 @@ master_mixer.parameters_metadata = {
 stage_post_finishing = PipelineStage("Channel 5: Post Finishing", standard_linear_processor)
 stage_post_finishing.set_inputs(["Master Mixer Desk"])
 stage_post_finishing.add_layers([
-    fx_post_bright, fx_post_contrast, fx_post_echo, fx_post_tblur
+    fx_post_features, fx_post_analog
 ])
 
 

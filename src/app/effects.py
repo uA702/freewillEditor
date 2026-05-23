@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import cmapy
+import random
 
 class BaseEffect:
     """Abstract base class for all frame-processing pipeline layers."""
@@ -750,107 +751,208 @@ class ROIEffect(BaseEffect):
         
         return output_canvas
 
-
-class FeatureDetectorEffect(BaseEffect):
+class FeatureClusterTrackerEffect(BaseEffect):
     def __init__(self):
         super().__init__()
         
-        self.algorithms = ["ORB (Fast & Light)", "AKAZE (Precise)"]
-        self.outputs = [
-            "Overlay Boxes & Points", 
-            "Binary Split (0/255 Box Isolation)", 
-            "Alpha Channel Mask (Transparent Exterior)"
-        ]
-
+        # Max features to detect using Good Features To Track (GFTT)
         self.parameters = {
             "enabled": False,
-            "algorithm": "ORB (Fast & Light)",
-            "output_type": "Overlay Boxes & Points",
-            "max_features": 500,       
-            "padding": 15,             
-            "min_cluster_points": 4    
+            "max_features": 100,
+            "quality_level": 30,    # Divided by 100 in apply() -> 0.30
+            "min_distance": 15,
+            "num_clusters": 3,      # Dynamic K-value for clustering
+            "box_thickness": 2
         }
         
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "algorithm": {"type": "str_choice", "default": "ORB (Fast & Light)", "choices": self.algorithms},
-            "output_type": {"type": "str_choice", "default": "Overlay Boxes & Points", "choices": self.outputs},
-            "max_features": {"type": "int", "default": 500, "min": 50, "max": 2000},
-            "padding": {"type": "int", "default": 15, "min": 0, "max": 100},
-            "min_cluster_points": {"type": "int", "default": 4, "min": 2, "max": 20}
+            "max_features": {"type": "int", "default": 100, "min": 10, "max": 500},
+            "quality_level": {"type": "int", "default": 30, "min": 1, "max": 100},
+            "min_distance": {"type": "int", "default": 15, "min": 1, "max": 100},
+            "num_clusters": {"type": "int", "default": 3, "min": 1, "max": 10},
+            "box_thickness": {"type": "int", "default": 2, "min": 1, "max": 5}
         }
 
-        self.orb = cv2.ORB_create(nfeatures=self.parameters["max_features"])
-        self.akaze = cv2.AKAZE_create()
+    def _sanitize_bool(self, value) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes", "on")
+        return bool(value)
 
     def apply(self, frame: np.ndarray) -> np.ndarray:
-        if not self.parameters.get("enabled", True):
+        if not self._sanitize_bool(self.parameters.get("enabled", True)):
             return frame
 
-        h, w, c = frame.shape
-        algo = self.parameters.get("algorithm", "ORB (Fast & Light)")
-        output_type = self.parameters.get("output_type", "Overlay Boxes & Points")
-        padding = self.parameters.get("padding", 15)
-        min_points = self.parameters.get("min_cluster_points", 4)
-
-        # Slice away preexisting alpha if it exists for tracking detection accuracy
-        color_data = frame[:, :, :3] if c == 4 else frame
+        # Work on a copy to avoid burning tracking boxes into your clean matrix cache
+        output_frame = frame.copy()
+        
+        # Pull color/alpha attributes safely
+        color_data = output_frame[:, :, :3] if output_frame.shape[2] == 4 else output_frame
         gray = cv2.cvtColor(color_data, cv2.COLOR_BGR2GRAY)
-        keypoints = []
 
-        if algo == "ORB (Fast & Light)":
-            self.orb.setMaxFeatures(self.parameters["max_features"])
-            keypoints, _ = self.orb.detectAndCompute(gray, None)
-        elif algo == "AKAZE (Precise)":
-            keypoints, _ = self.akaze.detectAndCompute(gray, None)
+        # Parse tracking parameters
+        max_feats = int(self.parameters.get("max_features", 100))
+        qual_level = float(self.parameters.get("quality_level", 30)) / 100.0
+        min_dist = int(self.parameters.get("min_distance", 15))
+        k_clusters = int(self.parameters.get("num_clusters", 3))
+        thick = int(self.parameters.get("box_thickness", 2))
 
-        box_found = False
-        x1, y1, x2, y2 = 0, 0, 0, 0
+        # 1. Detect raw corner feature points
+        points = cv2.goodFeaturesToTrack(
+            gray, 
+            maxCorners=max_feats, 
+            qualityLevel=qual_level, 
+            minDistance=min_dist
+        )
 
-        if len(keypoints) >= min_points:
-            pts = np.array([kp.pt for kp in keypoints], dtype=np.int32)
-            min_x, min_y = np.min(pts, axis=0)
-            max_x, max_y = np.max(pts, axis=0)
+        # Guard: If no features are detected, exit early
+        if points is None or len(points) == 0:
+            return output_frame
+
+        # Flatten features array to shape: (N, 2) where each row is [x, y]
+        feat_coords = points.reshape(-1, 2).astype(np.float32)
+        num_points = feat_coords.shape[0]
+
+        # 2. Adjust cluster count dynamically based on available data points
+        # K-Means crashes if K > total data points, so we clamp it safely
+        actual_k = min(k_clusters, num_points)
+
+        # 3. Execute K-Means Clustering over spatial coordinates
+        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+        flags = cv2.KMEANS_RANDOM_CENTERS
+        
+        compactness, labels, centers = cv2.kmeans(
+            feat_coords, 
+            K=actual_k, 
+            bestLabels=None, 
+            criteria=criteria, 
+            attempts=10, 
+            flags=flags
+        )
+
+        # Flatten labels list to shape (N,)
+        labels = labels.flatten()
+
+        # 4. Generate unique bounding boxes for each independent cluster cluster
+        # We can cycle through a distinct preset color array for clear UI visualization
+        cluster_colors = [
+            (0, 230, 118),   # Neon Green
+            (0, 176, 255),   # Neon Blue
+            (255, 23, 68),   # Vibrant Red
+            (255, 234, 0),   # Neon Yellow
+            (224, 64, 251),  # Bright Purple
+            (255, 109, 0)    # Electric Orange
+        ]
+
+        for cluster_id in range(actual_k):
+            # Mask out only the coordinate points belonging to the current cluster loop
+            cluster_points = feat_coords[labels == cluster_id]
             
-            x1 = max(0, min_x - padding)
-            y1 = max(0, min_y - padding)
-            x2 = min(w, max_x + padding)
-            y2 = min(h, max_y + padding)
+            if len(cluster_points) == 0:
+                continue
+
+            # Calculate the spatial limits for the current tracked group
+            x_min = int(np.min(cluster_points[:, 0]))
+            y_min = int(np.min(cluster_points[:, 1]))
+            x_max = int(np.max(cluster_points[:, 0]))
+            y_max = int(np.max(cluster_points[:, 1]))
+
+            # Select a color loop assignment
+            color = cluster_colors[cluster_id % len(cluster_colors)]
+
+            # Draw bounding tracking perimeter box
+            cv2.rectangle(color_data, (x_min, y_min), (x_max, y_max), color, thick)
+
+            # Draw tiny anchor dots for points inside this specific cluster
+            for pt in cluster_points:
+                cv2.circle(color_data, (int(pt[0]), int(pt[1])), 3, color, -1)
+                
+            # Draw an ID badge label above each tracking box
+            cv2.putText(
+                color_data, 
+                f"TRK #{cluster_id + 1}", 
+                (x_min, max(y_min - 5, 15)), 
+                cv2.FONT_HERSHEY_SIMPLEX, 
+                0.4, 
+                color, 
+                1, 
+                cv2.LINE_AA
+            )
+
+        # Re-attach the alpha mask seamlessly back into the pipeline if present
+        if output_frame.shape[2] == 4:
+            output_frame[:, :, :3] = color_data
+            return output_frame
             
-            if (x2 - x1) > 0 and (y2 - y1) > 0:
-                box_found = True
+        return color_data
 
-        # Mode A: Standard UI analysis overlay
-        if output_type == "Overlay Boxes & Points":
-            out_frame = frame.copy()
-            for kp in keypoints:
-                pt = (int(kp.pt[0]), int(kp.pt[1]))
-                cv2.circle(out_frame, pt, 3, (0, 255, 0), -1)
-            if box_found:
-                cv2.rectangle(out_frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
-            return out_frame
+class AnalogSyncGlitchEffect(BaseEffect):
+    def __init__(self):
+        super().__init__()
+        
+        self.parameters = {
+            "enabled": False,
+            "h_jitter_amount": 15,     # Maximum horizontal pixel shift
+            "h_jitter_chance": 20,     # Probability % that any given scanline jitters
+            "v_sync_roll": 0,          # Vertical displacement / rolling offset
+            "v_sync_chance": 5         # Probability % that a V-Sync drop occurs on a frame
+        }
+        
+        self.parameters_metadata = {
+            "enabled": {"type": "bool", "default": False},
+            "h_jitter_amount": {"type": "int", "default": 15, "min": 0, "max": 100},
+            "h_jitter_chance": {"type": "int", "default": 20, "min": 0, "max": 100},
+            "v_sync_roll": {"type": "int", "default": 0, "min": 0, "max": 100},
+            "v_sync_chance": {"type": "int", "default": 5, "min": 0, "max": 100}
+        }
 
-        # Core Mask Generation for Modes B and C
-        mask = np.zeros((h, w), dtype=np.uint8)
-        if box_found:
-            mask[y1:y2, x1:x2] = 255
+    def _sanitize_bool(self, value) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes", "on")
+        return bool(value)
 
-        # Mode B: High contrast Binary split 
-        if output_type == "Binary Split (0/255 Box Isolation)":
-            if c == 4:
-                # Isolate 3 channels + preserve original alpha values inside the mask bounding box
-                color_masked = cv2.bitwise_and(frame[:, :, :3], frame[:, :, :3], mask=mask)
-                alpha_masked = cv2.bitwise_and(frame[:, :, 3], frame[:, :, 3], mask=mask)
-                return np.concatenate([color_masked, alpha_masked[:, :, np.newaxis]], axis=2)
-            return cv2.bitwise_and(frame, frame, mask=mask)
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        if not self._sanitize_bool(self.parameters.get("enabled", True)):
+            return frame
 
-        # Mode C: Transparence Alpha Keyer
-        elif output_type == "Alpha Channel Mask (Transparent Exterior)":
-            bgra = cv2.cvtColor(color_data, cv2.COLOR_BGR2BGRA)
-            bgra[:, :, 3] = mask  
-            return bgra
+        # Create a working copy to avoid mutating the original frame cache
+        glitched_frame = frame.copy()
+        h, w = glitched_frame.shape[:2]
 
-        return frame
+        # Extract values from parameters
+        h_amount = int(self.parameters.get("h_jitter_amount", 15))
+        h_chance = int(self.parameters.get("h_jitter_chance", 20))
+        v_roll_pct = int(self.parameters.get("v_sync_roll", 0))
+        v_chance = int(self.parameters.get("v_sync_chance", 5))
+
+        # -----------------------------------------------------------------
+        # 1. VERTICAL SYNC MISALIGNMENT (Frame Rolling / Jumping)
+        # -----------------------------------------------------------------
+        # Check if a V-Sync drop rolls the screen on this specific frame execution pass
+        if v_roll_pct > 0 and random.randint(1, 100) <= v_chance:
+            # Map percentage slider to actual pixel displacement height
+            roll_pixels = int((v_roll_pct / 100.0) * h)
+            # Add a random jump modifier to simulate instability
+            roll_pixels = (roll_pixels + random.randint(-10, 10)) % h
+            
+            # np.roll shifts the array elements over the vertical axis (axis=0)
+            glitched_frame = np.roll(glitched_frame, shift=roll_pixels, axis=0)
+
+        # -----------------------------------------------------------------
+        # 2. HORIZONTAL SYNC MISALIGNMENT (Line Scanline Jitter)
+        # -----------------------------------------------------------------
+        if h_amount > 0 and h_chance > 0:
+            # Loop through individual scanlines
+            for y in range(h):
+                # Check if this specific scanline loses h-sync lock
+                if random.randint(1, 100) <= h_chance:
+                    # Calculate random shift intensity for this specific row
+                    shift = random.randint(-h_amount, h_amount)
+                    
+                    # np.roll shifts the pixel channels over the horizontal axis (axis=1)
+                    glitched_frame[y] = np.roll(glitched_frame[y], shift=shift, axis=0)
+
+        return glitched_frame
 
 
 # =====================================================================
