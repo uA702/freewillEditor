@@ -2,4 +2,4 @@ opencv-python
 numpy
 pyside6
 cmapy
-matplotlib
+scipy

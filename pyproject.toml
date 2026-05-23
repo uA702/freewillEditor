@@ -5,7 +5,8 @@ dependencies = [
     "opencv-python",
     "numpy",
     "pyside6",
-    "cmapy"
+    "cmapy",
+    "scipy"
 ]
 
 [build-system]

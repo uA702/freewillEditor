@@ -293,9 +293,9 @@ stage_channel_2.add_layers([
 # --- MASTER STAGE 3: MONOCHROME CHANNEL 1 ---
 stage_channel_3 = PipelineStage("Channel 3: Mono Glitch Alpha", standard_linear_processor)
 stage_channel_3.add_layers([
+    fx_m1_thresh, fx_m1_edges, 
     fx_m1_mono, fx_m1_invert,
     fx_m1_bright, fx_m1_contrast,
-    fx_m1_thresh, fx_m1_edges, 
     fx_m1_blur, 
     fx_m1_echo, fx_m1_tblur, 
     fx_m1_cmap, fx_m1_roi
@@ -304,9 +304,9 @@ stage_channel_3.add_layers([
 # --- MASTER STAGE 4: MONOCHROME CHANNEL 2 ---
 stage_channel_4 = PipelineStage("Channel 4: Mono Glitch Beta", standard_linear_processor)
 stage_channel_4.add_layers([
+    fx_m2_thresh, fx_m2_edges, 
     fx_m2_mono, fx_m2_invert,
     fx_m2_bright, fx_m2_contrast,
-    fx_m2_thresh, fx_m2_edges, 
     fx_m2_blur, 
     fx_m2_echo, fx_m2_tblur, 
     fx_m2_cmap, fx_m2_roi
