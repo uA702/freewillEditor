@@ -751,141 +751,183 @@ class ROIEffect(BaseEffect):
         
         return output_canvas
 
-class FeatureClusterTrackerEffect(BaseEffect):
+class FeatureTracker(BaseEffect):
     def __init__(self):
         super().__init__()
         
-        # Max features to detect using Good Features To Track (GFTT)
+        self.detector_modes = ["Performance (Shi-Tomasi)", "Extreme Accuracy (SIFT)"]
+        self.style_modes = ["Colored", "White", "Black", "Disabled"]
+
         self.parameters = {
             "enabled": False,
-            "max_features": 100,
-            "quality_level": 30,    # Divided by 100 in apply() -> 0.30
-            "min_distance": 15,
-            "num_clusters": 3,      # Dynamic K-value for clustering
-            "box_thickness": 2
+            "detector_type": "Extreme Accuracy (SIFT)",
+            "box_style": "Colored",
+            "max_features": 150,
+            "max_cluster_distance": 50,  # DBSCAN 'eps' -> Max pixel distance between points in a cluster
+            "min_cluster_density": 4,    # DBSCAN 'min_samples' -> Min points required to form a cluster
+            "box_thickness": 2,
+            "mask_alpha_roi": True       # Toggle to slice out background via the 4th alpha channel
         }
         
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
-            "max_features": {"type": "int", "default": 100, "min": 10, "max": 500},
-            "quality_level": {"type": "int", "default": 30, "min": 1, "max": 100},
-            "min_distance": {"type": "int", "default": 15, "min": 1, "max": 100},
-            "num_clusters": {"type": "int", "default": 3, "min": 1, "max": 10},
-            "box_thickness": {"type": "int", "default": 2, "min": 1, "max": 5}
+            "detector_type": {"type": "str_choice", "default": "Extreme Accuracy (SIFT)", "choices": self.detector_modes},
+            "box_style": {"type": "str_choice", "default": "Colored", "choices": self.style_modes},
+            "max_features": {"type": "int", "default": 150, "min": 10, "max": 500},
+            "max_cluster_distance": {"type": "int", "default": 50, "min": 5, "max": 200},
+            "min_cluster_density": {"type": "int", "default": 4, "min": 2, "max": 20},
+            "box_thickness": {"type": "int", "default": 2, "min": 1, "max": 5},
+            "mask_alpha_roi": {"type": "bool", "default": True}
         }
+
+        # Pre-initialize detection engines to save heap allocation overhead
+        self.sift_engine = cv2.SIFT_create()
 
     def _sanitize_bool(self, value) -> bool:
         if isinstance(value, str):
             return value.strip().lower() in ("true", "1", "yes", "on")
         return bool(value)
 
+    def _get_box_color(self, style: str, index: int, palette: list) -> tuple:
+        if style == "White": 
+            return (255, 255, 255)
+        if style == "Black": 
+            return (0, 0, 0)
+        return palette[index % len(palette)]
+
     def apply(self, frame: np.ndarray) -> np.ndarray:
         if not self._sanitize_bool(self.parameters.get("enabled", True)):
             return frame
 
-        # Work on a copy to avoid burning tracking boxes into your clean matrix cache
         output_frame = frame.copy()
-        
-        # Pull color/alpha attributes safely
-        color_data = output_frame[:, :, :3] if output_frame.shape[2] == 4 else output_frame
-        gray = cv2.cvtColor(color_data, cv2.COLOR_BGR2GRAY)
-
-        # Parse tracking parameters
-        max_feats = int(self.parameters.get("max_features", 100))
-        qual_level = float(self.parameters.get("quality_level", 30)) / 100.0
-        min_dist = int(self.parameters.get("min_distance", 15))
-        k_clusters = int(self.parameters.get("num_clusters", 3))
-        thick = int(self.parameters.get("box_thickness", 2))
-
-        # 1. Detect raw corner feature points
-        points = cv2.goodFeaturesToTrack(
-            gray, 
-            maxCorners=max_feats, 
-            qualityLevel=qual_level, 
-            minDistance=min_dist
-        )
-
-        # Guard: If no features are detected, exit early
-        if points is None or len(points) == 0:
+        box_style = self.parameters.get("box_style", "Colored")
+        if box_style == "Disabled":
             return output_frame
 
-        # Flatten features array to shape: (N, 2) where each row is [x, y]
-        feat_coords = points.reshape(-1, 2).astype(np.float32)
+        color_data = output_frame[:, :, :3] if output_frame.shape[2] == 4 else output_frame
+        h, w = color_data.shape[:2]
+        gray = cv2.cvtColor(color_data, cv2.COLOR_BGR2GRAY)
+
+        # Parse shared UI settings
+        detector_type = self.parameters.get("detector_type", "Extreme Accuracy (SIFT)")
+        max_feats = int(self.parameters.get("max_features", 150))
+        eps = float(self.parameters.get("max_cluster_distance", 50))
+        min_samples = int(self.parameters.get("min_cluster_density", 4))
+        thick = int(self.parameters.get("box_thickness", 2))
+        mask_roi = self._sanitize_bool(self.parameters.get("mask_alpha_roi", True))
+
+        # -----------------------------------------------------------------
+        # STEP 1: EXECUTE DETECTOR ROUTING
+        # -----------------------------------------------------------------
+        feat_coords = None
+
+        if detector_type == "Extreme Accuracy (SIFT)":
+            # SIFT doesn't have a direct setMaxFeatures limit method on the fly, 
+            # so we slice the highest response keypoints manually
+            keypoints = self.sift_engine.detect(gray, None)
+            if keypoints:
+                keypoints = sorted(keypoints, key=lambda x: x.response, reverse=True)[:max_feats]
+                feat_coords = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+        else:
+            # Fallback: Fast Shi-Tomasi
+            points = cv2.goodFeaturesToTrack(gray, maxCorners=max_feats, qualityLevel=0.05, minDistance=10)
+            if points is not None and len(points) > 0:
+                feat_coords = points.reshape(-1, 2).astype(np.float32)
+
+        if feat_coords is None or len(feat_coords) == 0:
+            # If tracking drops entirely and ROI masking is enabled, return a transparent blank slate
+            if mask_roi and output_frame.shape[2] == 4:
+                output_frame[:, :, 3] = 0
+            return output_frame
+
+        # -----------------------------------------------------------------
+        # STEP 2: DENSITY CLUSTERING ENGINE (OpenCV DBSCAN Emulation)
+        # -----------------------------------------------------------------
+        # Since OpenCV doesn't have a built-in cv2.dbscan, we implement a highly 
+        # optimized vector neighbor search directly inside native NumPy!
         num_points = feat_coords.shape[0]
+        labels = np.full(num_points, -1, dtype=np.int32)  # -1 means Unassigned / Noise
+        cluster_id = 0
 
-        # 2. Adjust cluster count dynamically based on available data points
-        # K-Means crashes if K > total data points, so we clamp it safely
-        actual_k = min(k_clusters, num_points)
+        for i in range(num_points):
+            if labels[i] != -1:
+                continue
+            
+            # Vectorized Euclidean distance across matrix space
+            distances = np.linalg.norm(feat_coords - feat_coords[i], axis=1)
+            neighbors = np.where(distances <= eps)[0]
 
-        # 3. Execute K-Means Clustering over spatial coordinates
-        criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-        flags = cv2.KMEANS_RANDOM_CENTERS
-        
-        compactness, labels, centers = cv2.kmeans(
-            feat_coords, 
-            K=actual_k, 
-            bestLabels=None, 
-            criteria=criteria, 
-            attempts=10, 
-            flags=flags
-        )
+            if len(neighbors) < min_samples:
+                continue  # Left as noise/outlier boundary point
 
-        # Flatten labels list to shape (N,)
-        labels = labels.flatten()
+            # Expand the cluster density group
+            labels[neighbors] = cluster_id
+            queue = list(neighbors)
 
-        # 4. Generate unique bounding boxes for each independent cluster cluster
-        # We can cycle through a distinct preset color array for clear UI visualization
+            while len(queue) > 0:
+                current_node = queue.pop(0)
+                node_distances = np.linalg.norm(feat_coords - feat_coords[current_node], axis=1)
+                node_neighbors = np.where(node_distances <= eps)[0]
+
+                if len(node_neighbors) >= min_samples:
+                    for neighbor in node_neighbors:
+                        if labels[neighbor] == -1:
+                            labels[neighbor] = cluster_id
+                            queue.append(neighbor)
+            
+            cluster_id += 1
+
+        # -----------------------------------------------------------------
+        # STEP 3: RENDERING & ALPHA ROI MASK MANIPULATION
+        # -----------------------------------------------------------------
         cluster_colors = [
-            (0, 230, 118),   # Neon Green
-            (0, 176, 255),   # Neon Blue
-            (255, 23, 68),   # Vibrant Red
-            (255, 234, 0),   # Neon Yellow
-            (224, 64, 251),  # Bright Purple
-            (255, 109, 0)    # Electric Orange
+            (0, 230, 118), (0, 176, 255), (255, 23, 68), 
+            (255, 234, 0), (224, 64, 251), (255, 109, 0)
         ]
 
-        for cluster_id in range(actual_k):
-            # Mask out only the coordinate points belonging to the current cluster loop
-            cluster_points = feat_coords[labels == cluster_id]
-            
+        # Initialize an empty canvas for the new alpha map
+        roi_mask = np.zeros((h, w), dtype=np.uint8) if (mask_roi and output_frame.shape[2] == 4) else None
+
+        # Process non-noise cluster groups (cluster_id is total discovered groups)
+        for c_grp in range(cluster_id):
+            cluster_points = feat_coords[labels == c_grp]
             if len(cluster_points) == 0:
                 continue
 
-            # Calculate the spatial limits for the current tracked group
             x_min = int(np.min(cluster_points[:, 0]))
             y_min = int(np.min(cluster_points[:, 1]))
             x_max = int(np.max(cluster_points[:, 0]))
             y_max = int(np.max(cluster_points[:, 1]))
 
-            # Select a color loop assignment
-            color = cluster_colors[cluster_id % len(cluster_colors)]
+            # Clamp layout metrics to canvas size limits safely
+            x_min, y_min = max(0, x_min), max(0, y_min)
+            x_max, y_max = min(w, x_max), min(h, y_max)
 
-            # Draw bounding tracking perimeter box
+            color = self._get_box_color(box_style, c_grp, cluster_colors)
+
+            # Draw visual borders onto color matrix
             cv2.rectangle(color_data, (x_min, y_min), (x_max, y_max), color, thick)
-
-            # Draw tiny anchor dots for points inside this specific cluster
             for pt in cluster_points:
-                cv2.circle(color_data, (int(pt[0]), int(pt[1])), 3, color, -1)
+                cv2.circle(color_data, (int(pt[0]), int(pt[1])), thick, color, -1)
                 
-            # Draw an ID badge label above each tracking box
-            cv2.putText(
-                color_data, 
-                f"TRK #{cluster_id + 1}", 
-                (x_min, max(y_min - 5, 15)), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                0.4, 
-                color, 
-                1, 
-                cv2.LINE_AA
-            )
+            cv2.putText(color_data, f"TRK #{c_grp + 1}", (x_min, max(y_min - 5, 15)), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
 
-        # Re-attach the alpha mask seamlessly back into the pipeline if present
+            # If our alpha layer exists, carve open this bounding box rectangle as opaque (255)
+            if roi_mask is not None:
+                cv2.rectangle(roi_mask, (x_min, y_min), (x_max, y_max), 255, -1)
+
+        # -----------------------------------------------------------------
+        # STEP 4: SEAMLESS RECOMBINATION
+        # -----------------------------------------------------------------
         if output_frame.shape[2] == 4:
             output_frame[:, :, :3] = color_data
+            if mask_roi and roi_mask is not None:
+                output_frame[:, :, 3] = roi_mask # Replace the alpha channel with our custom cluster boundaries
             return output_frame
             
         return color_data
-
+    
 class AnalogSyncGlitchEffect(BaseEffect):
     def __init__(self):
         super().__init__()

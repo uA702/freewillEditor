@@ -262,7 +262,7 @@ fx_post_add      = fx.AddEffect()
 fx_post_blur     = fx.LocalBlurEffect()
 fx_post_echo     = fx.LocalEchoEffect()
 fx_post_tblur    = fx.LocalTemporalBlurEffect()
-fx_post_features = fx.FeatureClusterTrackerEffect()
+fx_post_features = fx.FeatureTracker()
 fx_post_analog   = fx.AnalogSyncGlitchEffect()
 
 
