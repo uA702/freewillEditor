@@ -1,4 +1,5 @@
 import sys
+import os
 import threading
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QLineEdit, 
@@ -291,19 +292,56 @@ class VideoEditorApp(QMainWindow):
         self.sliders_layout.addStretch()
 
     def browse_input(self):
-        # Guard: block browsing if live camera mode is on
+        # Guard: block file browsing if live camera mode is active
         if self.chk_live.isChecked():
             return
             
-        path, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Videos (*.mp4 *.avi *.mkv *.mov)")
+        # Comprehensive filter list for both video containers and image codecs
+        file_filter = (
+            "All Supported Media (*.mp4 *.avi *.mov *.mkv *.webm *.png *.jpg *.jpeg *.webp *.bmp *.tiff *.tif);;"
+            "Video Files (*.mp4 *.avi *.mov *.mkv *.webm);;"
+            "Image Files (*.png *.jpg *.jpeg *.webp *.bmp *.tiff *.tif)"
+        )
+        
+        path, _ = QFileDialog.getOpenFileName(self, "Open Media Source", "", file_filter)
         if path:
             self.txt_input.setText(path)
-            self.worker.load_video(path)
+            
+            # Load the file matrix into the worker layer
+            success = self.worker.load_video(path)
+            
+            if success:
+                # Ensure the background thread loop starts executing so that real-time
+                # slider updates and effect adjustments render automatically on screen!
+                if not self.worker.isRunning():
+                    self.worker.start()
 
     def browse_output(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Specify Destination Target", "", "MP4 Video (*.mp4)")
-        if path:
-            self.txt_output.setText(path)
+        # Dynamically determine the default extension based on what is loaded in the input text box
+        input_path = self.txt_input.text().lower()
+        _, input_ext = os.path.splitext(input_path)
+        
+        # Smart extension assignment rules
+        is_image = input_ext in {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif'}
+        
+        # Structure distinct file filter targets so the OS file browser behaves predictably
+        if is_image:
+            file_filter = "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp);;All Files (*.*)"
+            default_suffix = ".png"
+        else:
+            file_filter = "MP4 Video (*.mp4);;AVI Video (*.avi);;All Files (*.*)"
+            default_suffix = ".mp4"
+
+        # Explicitly configure the Save Dialog options
+        dialog = QFileDialog(self, "Specify Destination Target", "")
+        dialog.setAcceptMode(QFileDialog.AcceptSave)
+        dialog.setNameFilter(file_filter)
+        dialog.setDefaultSuffix(default_suffix)
+        
+        if dialog.exec():
+            selected_paths = dialog.selectedFiles()
+            if selected_paths:
+                self.txt_output.setText(selected_paths[0])
 
     def update_video_canvas(self, q_img):
         scaled_pixmap = QPixmap.fromImage(q_img).scaled(

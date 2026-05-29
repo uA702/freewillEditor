@@ -602,22 +602,32 @@ class ROIEffect(BaseEffect):
         output_canvas = np.zeros_like(frame)
         output_canvas[y1:y2, x1:x2] = frame[y1:y2, x1:x2]
         return output_canvas
-
-
+    
 class FeatureTracker(BaseEffect):
     def __init__(self):
         super().__init__()
         self.detector_modes = ["Performance (Shi-Tomasi)", "Extreme Accuracy (SIFT)"]
         self.style_modes = ["Colored", "White", "Black", "Disabled"]
+        self.geometry_modes = ["Rectangular Box", "Circle", "Elipsoid", "Connecting Polygon"]
+        
         self.parameters = {
-            "enabled": False, "detector_type": "Extreme Accuracy (SIFT)", "box_style": "Colored",
-            "max_features": 150, "max_cluster_distance": 50, "min_cluster_density": 4,
-            "box_thickness": 2, "mask_alpha_roi": True, "frame_throttle": 2
+            "enabled": False, 
+            "detector_type": "Extreme Accuracy (SIFT)", 
+            "box_style": "Colored",
+            "geometry_mode": "Rectangular Box", # NEW DROPDOWN OPTION
+            "max_features": 150, 
+            "max_cluster_distance": 50, 
+            "min_cluster_density": 4,
+            "box_thickness": 2, 
+            "mask_alpha_roi": True, 
+            "frame_throttle": 2
         }
+        
         self.parameters_metadata = {
             "enabled": {"type": "bool", "default": False},
             "detector_type": {"type": "str_choice", "default": "Extreme Accuracy (SIFT)", "choices": self.detector_modes},
             "box_style": {"type": "str_choice", "default": "Colored", "choices": self.style_modes},
+            "geometry_mode": {"type": "str_choice", "default": "Rectangular Box", "choices": self.geometry_modes},
             "max_features": {"type": "int", "default": 150, "min": 10, "max": 500},
             "max_cluster_distance": {"type": "int", "default": 50, "min": 5, "max": 200},
             "min_cluster_density": {"type": "int", "default": 4, "min": 2, "max": 20},
@@ -657,6 +667,7 @@ class FeatureTracker(BaseEffect):
         h, w = color_data.shape[:2]
         
         detector_type = self.parameters.get("detector_type", "Extreme Accuracy (SIFT)")
+        geometry_mode = self.parameters.get("geometry_mode", "Rectangular Box")
         max_feats = int(self.parameters.get("max_features", 150))
         eps = float(self.parameters.get("max_cluster_distance", 50))
         min_samples = int(self.parameters.get("min_cluster_density", 4))
@@ -691,22 +702,17 @@ class FeatureTracker(BaseEffect):
                 # 2. HARDWARE-ACCELERATED CLUSTERING
                 num_points = feat_coords.shape[0]
                 
-                # Matrix broadcast calculation
                 diff = feat_coords[:, np.newaxis, :] - feat_coords[np.newaxis, :, :]
                 dist_matrix = np.linalg.norm(diff, axis=2)
                 
-                # Build adjacency graph
                 adj_graph = (dist_matrix <= eps).astype(np.uint8)
                 
-                # Use a proper graph algorithm instead of an image processing blob detector
                 num_labels, point_labels = connected_components(csgraph=adj_graph, directed=False, return_labels=True)
 
-                # Filter mask logic: Enforce minimum point density constraints per group
                 final_labels = np.full(num_points, -1, dtype=np.int32)
                 actual_cluster_idx = 0
                 
                 for lbl in range(num_labels):
-                    # Mask against the point assignment array (size matches num_points)
                     mask = (point_labels == lbl)
                     if np.sum(mask) >= min_samples:
                         final_labels[mask] = actual_cluster_idx
@@ -728,18 +734,79 @@ class FeatureTracker(BaseEffect):
             if len(cluster_points) == 0: 
                 continue
 
-            x_min, y_min = max(0, int(np.min(cluster_points[:, 0]))), max(0, int(np.min(cluster_points[:, 1])))
-            x_max, y_max = min(w, int(np.max(cluster_points[:, 0]))), min(h, int(np.max(cluster_points[:, 1])))
-
             color = self._get_box_color(box_style, c_grp, cluster_colors)
-            cv2.rectangle(color_data, (x_min, y_min), (x_max, y_max), color, thick)
             
+            # --- DYNAMIC GEOMETRIC RENDERING INTERFACES ---
+            if geometry_mode == "Rectangular Box":
+                x_min, y_min = max(0, int(np.min(cluster_points[:, 0]))), max(0, int(np.min(cluster_points[:, 1])))
+                x_max, y_max = min(w, int(np.max(cluster_points[:, 0]))), min(h, int(np.max(cluster_points[:, 1])))
+                
+                cv2.rectangle(color_data, (x_min, y_min), (x_max, y_max), color, thick)
+                cv2.putText(color_data, f"TRK #{c_grp + 1}", (x_min, max(y_min - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+                
+                if roi_mask is not None:
+                    cv2.rectangle(roi_mask, (x_min, y_min), (x_max, y_max), 255, -1)
+
+            elif geometry_mode == "Circle Clusters":
+                # Automatically calculate the exact minimal enclosing circle parameters
+                center, radius = cv2.minEnclosingCircle(cluster_points.astype(np.float32))
+                cx, cy, r = int(center[0]), int(center[1]), int(radius)
+
+                cv2.circle(color_data, (cx, cy), r, color, thick)
+                cv2.putText(color_data, f"TRK #{c_grp + 1}", (cx - 15, max(cy - r - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+
+                if roi_mask is not None:
+                    cv2.circle(roi_mask, (cx, cy), r, 255, -1) 
+                    
+            elif geometry_mode == "Elipsoid":
+                # Guard: cv2.fitEllipse requires a minimum of 5 points to mathematically calculate a curve
+                if len(cluster_points) >= 5:
+                    # 1. Fit an optimal rotated bounding ellipse to the feature points cloud
+                    # Returns: ((center_x, center_y), (width, height), rotation_angle)
+                    ellipse_params = cv2.fitEllipse(cluster_points.astype(np.float32))
+                    (cx, cy), (axes_w, axes_h), angle = ellipse_params
+                    
+                    # 2. Extract integer coordinates for drawing and map axis sizes to radii halves
+                    center = (int(cx), int(cy))
+                    axes = (int(axes_w / 2), int(axes_h / 2))
+                    
+                    # 3. Draw the ellipse on the screen layout
+                    # Arguments: frame, center, half-axes lengths, tilt angle, start angle, end angle, color, thickness
+                    cv2.ellipse(color_data, center, axes, angle, 0, 360, color, thick)
+                    
+                    # Draw a localized text label anchor offset cleanly from the center point
+                    cv2.putText(color_data, f"TRK #{c_grp + 1}", (int(cx) - 15, max(int(cy - (axes_h / 2)) - 5, 15)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+                    
+                    # 4. Fill transparency mask array if ROI masking engine is turned on
+                    if roi_mask is not None:
+                        cv2.ellipse(roi_mask, center, axes, angle, 0, 360, 255, -1)
+                else:
+                    # Fallback Strategy: If point density is low, fall back gracefully to a circle
+                    center, radius = cv2.minEnclosingCircle(cluster_points.astype(np.float32))
+                    cx, cy, r = int(center[0]), int(center[1]), int(radius)
+                    cv2.circle(color_data, (cx, cy), r, color, thick)
+                    cv2.putText(color_data, f"TRK #{c_grp + 1}", (cx - 15, max(cy - r - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+                    if roi_mask is not None:
+                        cv2.circle(roi_mask, (cx, cy), r, 255, -1)
+                    
+            elif geometry_mode == "Connecting Polygon":
+                # Compute a Convex Hull boundary contour from the tracking point cluster
+                hull = cv2.convexHull(cluster_points.astype(np.int32))
+                
+                # Reshape array for safe polylines injection
+                cv2.polylines(color_data, [hull], isClosed=True, color=color, thickness=thick)
+                
+                # Extract text anchorage layout placement using first vertex coordinate of polygon
+                text_x, text_y = hull[0][0][0], hull[0][0][1]
+                cv2.putText(color_data, f"TRK #{c_grp + 1}", (text_x, max(text_y - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
+                
+                if roi_mask is not None:
+                    cv2.fillPoly(roi_mask, [hull], 255)
+
+            # Draw underlying core tracked feature points
             for pt in cluster_points:
                 cv2.circle(color_data, (int(pt[0]), int(pt[1])), thick, color, -1)
-                
-            cv2.putText(color_data, f"TRK #{c_grp + 1}", (x_min, max(y_min - 5, 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1, cv2.LINE_AA)
-            if roi_mask is not None:
-                cv2.rectangle(roi_mask, (x_min, y_min), (x_max, y_max), 255, -1)
 
         if has_alpha:
             output_frame[:, :, :3] = color_data
