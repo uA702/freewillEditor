@@ -747,7 +747,7 @@ class FeatureTracker(BaseEffect):
                 if roi_mask is not None:
                     cv2.rectangle(roi_mask, (x_min, y_min), (x_max, y_max), 255, -1)
 
-            elif geometry_mode == "Circle Clusters":
+            elif geometry_mode == "Circle":
                 # Automatically calculate the exact minimal enclosing circle parameters
                 center, radius = cv2.minEnclosingCircle(cluster_points.astype(np.float32))
                 cx, cy, r = int(center[0]), int(center[1]), int(radius)

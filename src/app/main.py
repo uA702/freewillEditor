@@ -4,7 +4,8 @@ import threading
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                                QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                                QFileDialog, QGroupBox, QSlider, QComboBox, 
-                               QCheckBox, QProgressDialog, QMessageBox, QScrollArea)
+                               QCheckBox, QProgressDialog, QMessageBox, QScrollArea,
+                               QSpinBox)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 
@@ -15,7 +16,7 @@ class VideoEditorApp(QMainWindow):
     def __init__(self, registry):
         super().__init__()
         self.setWindowTitle("Freewill Editor Pipeline Framework")
-        self.setGeometry(100, 100, 1200, 670)
+        self.setGeometry(100, 100, 1200, 700) # Increased height slightly for layout breathing room
         
         self.registry = registry
         self.worker = VideoWorker(self.registry)
@@ -38,7 +39,7 @@ class VideoEditorApp(QMainWindow):
         self.btn_browse_in = QPushButton("Browse Input")
         self.btn_browse_in.clicked.connect(self.browse_input)
 
-        # NEW: Live Camera Toggle Checkbox
+        # Live Camera Toggle Checkbox
         self.chk_live = QCheckBox("Use Live Camera (Device 0)")
         self.chk_live.setStyleSheet("font-weight: bold; color: #00E676;")
         self.chk_live.stateChanged.connect(self.toggle_live_mode)
@@ -52,14 +53,41 @@ class VideoEditorApp(QMainWindow):
         self.btn_export.setStyleSheet("background-color: #2E7D32; color: white; font-weight: bold;")
         self.btn_export.clicked.connect(self.start_export)
 
+        self.cmb_resolution = QComboBox()
+        self.cmb_resolution.addItem("Original (100% Size)", 1.0)
+        self.cmb_resolution.addItem("Balanced (50% Size)", 0.5)
+        self.cmb_resolution.addItem("Performance (25% Size)", 0.25)
+        self.cmb_resolution.setCurrentIndex(1) # Default to 50%
+        self.cmb_resolution.currentIndexChanged.connect(self.update_worker_resolution)
+
+        # Custom FPS Layout Block
+        self.fps_layout = QHBoxLayout()
+        self.chk_custom_fps = QCheckBox("Override Export FPS:")
+        self.chk_custom_fps.setChecked(False)
+        
+        self.spin_fps = QSpinBox()
+        self.spin_fps.setRange(1, 120) # Set to 120 to support high frame-rate exports
+        self.spin_fps.setValue(30)
+        self.spin_fps.setEnabled(False) # Greyed out until the checkbox is checked
+        
+        # Connect layout toggling natively
+        self.chk_custom_fps.toggled.connect(self.spin_fps.setEnabled)
+        
+        self.fps_layout.addWidget(self.chk_custom_fps)
+        self.fps_layout.addWidget(self.spin_fps)
+        
+        # -- UI Top Layout Integration --
         top_layout.addWidget(QLabel("Input:"))
         top_layout.addWidget(self.txt_input)
         top_layout.addWidget(self.btn_browse_in)
-        top_layout.addWidget(self.chk_live) # Add live checkbox between input and output routing
+        top_layout.addWidget(self.chk_live) 
         top_layout.addWidget(QLabel("Output:"))
         top_layout.addWidget(self.txt_output)
         top_layout.addWidget(self.btn_browse_out)
+        top_layout.addWidget(self.cmb_resolution)
+        top_layout.addLayout(self.fps_layout) # Added clean alongside standard horizontal controls
         top_layout.addWidget(self.btn_export)
+        
         main_layout.addWidget(top_group)
 
         body_layout = QHBoxLayout()
@@ -124,6 +152,11 @@ class VideoEditorApp(QMainWindow):
         self.btn_browse_in.setEnabled(not is_live)
         self.btn_browse_out.setEnabled(not is_live)
         self.btn_export.setEnabled(not is_live)
+        self.chk_custom_fps.setEnabled(not is_live)
+        if is_live:
+            self.spin_fps.setEnabled(False)
+        else:
+            self.spin_fps.setEnabled(self.chk_custom_fps.isChecked())
         
         if self.worker.isRunning():
             self.worker.stop()
@@ -131,7 +164,7 @@ class VideoEditorApp(QMainWindow):
 
         if is_live:
             self.txt_input.setText("LIVE DEVICE STREAM ACTIVE (0)")
-            self.worker.load_video(0) # Pass integer 0 to open native default webcam hardware channel
+            self.worker.load_video(0) 
         else:
             self.txt_input.clear()
             self.lbl_video.setPixmap(QPixmap())
@@ -272,31 +305,21 @@ class VideoEditorApp(QMainWindow):
                     checkbox.stateChanged.connect(lambda state, l=layer, p=param: l.set_parameter(p, state == 2))
                     self.sliders_layout.addWidget(checkbox)
                 
-                # Place this directly alongside your "if meta.get('type') == 'int':" blocks inside generate_effect_sliders:
-
                 elif meta.get("type") == "str_choice":
-                    # Generate label layout block 
                     self.sliders_layout.addWidget(QLabel(f"      {param}:"))
-                    
-                    # Instantiate dropdown box widget layout element
                     dropdown = QComboBox()
                     dropdown.addItems(meta.get("choices", []))
                     dropdown.setCurrentText(layer.parameters[param])
                     dropdown.setStyleSheet("background-color: #222; color: #FFF; border: 1px solid #444; padding: 4px; border-radius: 3px;")
-                    
-                    # Connect change trigger signal to update the engine string state directly 
                     dropdown.currentTextChanged.connect(lambda text, l=layer, p=param: l.set_parameter(p, text))
-                    
                     self.sliders_layout.addWidget(dropdown)
         
         self.sliders_layout.addStretch()
 
     def browse_input(self):
-        # Guard: block file browsing if live camera mode is active
         if self.chk_live.isChecked():
             return
             
-        # Comprehensive filter list for both video containers and image codecs
         file_filter = (
             "All Supported Media (*.mp4 *.avi *.mov *.mkv *.webm *.png *.jpg *.jpeg *.webp *.bmp *.tiff *.tif);;"
             "Video Files (*.mp4 *.avi *.mov *.mkv *.webm);;"
@@ -307,24 +330,20 @@ class VideoEditorApp(QMainWindow):
         if path:
             self.txt_input.setText(path)
             
-            # Load the file matrix into the worker layer
-            success = self.worker.load_video(path)
+            # Synchronize downscale factor before handling loading matrices
+            self.worker.downscale_factor = self.cmb_resolution.currentData()
             
+            success = self.worker.load_video(path)
             if success:
-                # Ensure the background thread loop starts executing so that real-time
-                # slider updates and effect adjustments render automatically on screen!
                 if not self.worker.isRunning():
                     self.worker.start()
 
     def browse_output(self):
-        # Dynamically determine the default extension based on what is loaded in the input text box
         input_path = self.txt_input.text().lower()
         _, input_ext = os.path.splitext(input_path)
         
-        # Smart extension assignment rules
         is_image = input_ext in {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif'}
         
-        # Structure distinct file filter targets so the OS file browser behaves predictably
         if is_image:
             file_filter = "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;WebP Image (*.webp);;All Files (*.*)"
             default_suffix = ".png"
@@ -332,7 +351,6 @@ class VideoEditorApp(QMainWindow):
             file_filter = "MP4 Video (*.mp4);;AVI Video (*.avi);;All Files (*.*)"
             default_suffix = ".mp4"
 
-        # Explicitly configure the Save Dialog options
         dialog = QFileDialog(self, "Specify Destination Target", "")
         dialog.setAcceptMode(QFileDialog.AcceptSave)
         dialog.setNameFilter(file_filter)
@@ -343,6 +361,15 @@ class VideoEditorApp(QMainWindow):
             if selected_paths:
                 self.txt_output.setText(selected_paths[0])
 
+    def update_worker_resolution(self):
+        """Dynamically passes the selected scale factor down to the active processing worker."""
+        selected_factor = self.cmb_resolution.currentData()
+        self.worker.downscale_factor = selected_factor
+        
+        if self.worker.is_image_mode and self.txt_input.text():
+            current_path = self.txt_input.text()
+            self.worker.load_video(current_path)
+
     def update_video_canvas(self, q_img):
         scaled_pixmap = QPixmap.fromImage(q_img).scaled(
             self.lbl_video.width() - 10, self.lbl_video.height() - 10, Qt.KeepAspectRatio, Qt.SmoothTransformation
@@ -350,7 +377,6 @@ class VideoEditorApp(QMainWindow):
         self.lbl_video.setPixmap(scaled_pixmap)
 
     def toggle_play(self):
-        # If not live mode, check that we have an active input path
         if not self.chk_live.isChecked() and not self.txt_input.text(): 
             return
             
@@ -362,7 +388,6 @@ class VideoEditorApp(QMainWindow):
             self.worker.start()
 
     def restart_video(self):
-        # Don't restart live webcams
         if self.chk_live.isChecked():
             return
         self.worker.restart()
@@ -384,13 +409,20 @@ class VideoEditorApp(QMainWindow):
         if self.worker.isRunning():
             self.toggle_play()
 
+        # Extract Framerate logic target
+        if self.chk_custom_fps.isChecked():
+            chosen_fps = self.spin_fps.value()
+        else:
+            chosen_fps = None # Signal worker to fallback to native source parsing properties
+
         self.progress_dialog = QProgressDialog("Rendering pipeline frames to file...", "Cancel", 0, 100, self)
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         
         self.worker.export_progress.connect(lambda current, total: self.progress_dialog.setValue(int((current / total) * 100)))
         self.worker.export_finished.connect(self.on_export_finished)
 
-        t = threading.Thread(target=lambda: self.worker.export_video(self.txt_output.text()))
+        # Safely pass structural parameter values through the backend thread lambda call
+        t = threading.Thread(target=lambda: self.worker.export_video(self.txt_output.text(), custom_fps=chosen_fps))
         t.start()
 
     def on_export_finished(self, success):
@@ -402,7 +434,7 @@ class VideoEditorApp(QMainWindow):
             pass
 
         if success:
-            QMessageBox.information(self, "Complete", "Pipeline video successfully written to destination!")
+            QMessageBox.information(self, "Complete", "Pipeline media successfully written to destination!")
         else:
             QMessageBox.critical(self, "Error", "An unexpected exception stopped the engine file export sequence.")
 
