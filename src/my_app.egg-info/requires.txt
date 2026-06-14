@@ -3,3 +3,4 @@ numpy
 pyside6
 cmapy
 scipy
+moviepy

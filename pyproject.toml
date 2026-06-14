@@ -6,7 +6,8 @@ dependencies = [
     "numpy",
     "pyside6",
     "cmapy",
-    "scipy"
+    "scipy",
+    "moviepy"
 ]
 
 [build-system]

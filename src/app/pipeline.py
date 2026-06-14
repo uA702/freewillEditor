@@ -214,20 +214,6 @@ fx_b1_tblur    = fx.LocalTemporalBlurEffect()
 fx_b1_roi      = fx.ROIEffect()
 
 # --- Channel 2 Layers ---
-fx_b2_thresh   = fx.ThresholdingEffect()
-fx_b2_bright   = fx.BrightnessEffect()
-fx_b2_contrast = fx.ContrastEffect()
-fx_b2_sat      = fx.SaturationEffect()
-fx_b2_temp     = fx.ColorTempEffect()
-fx_b2_add      = fx.AddEffect()
-fx_b2_cshift   = fx.ColorShiftEffect()
-fx_b2_invert   = fx.InvertEffect()
-fx_b2_blur     = fx.LocalBlurEffect()
-fx_b2_echo     = fx.LocalEchoEffect()
-fx_b2_tblur    = fx.LocalTemporalBlurEffect()
-fx_b2_roi      = fx.ROIEffect()
-
-# --- Channel 3 Layers ---
 fx_m1_thresh   = fx.ThresholdingEffect()
 fx_m1_edges    = fx.EdgeDetectionEffect()
 fx_m1_mono     = fx.MonochromeEffect()
@@ -239,19 +225,6 @@ fx_m1_blur     = fx.LocalBlurEffect()
 fx_m1_echo     = fx.LocalEchoEffect()
 fx_m1_tblur    = fx.LocalTemporalBlurEffect() 
 fx_m1_roi      = fx.ROIEffect()
-
-# --- Channel 4 Layers ---
-fx_m2_thresh   = fx.ThresholdingEffect()
-fx_m2_edges    = fx.EdgeDetectionEffect()
-fx_m2_mono     = fx.MonochromeEffect()
-fx_m2_bright   = fx.BrightnessEffect()
-fx_m2_contrast = fx.ContrastEffect()
-fx_m2_invert   = fx.InvertEffect()
-fx_m2_cmap     = fx.ColorMappingEffect()
-fx_m2_blur     = fx.LocalBlurEffect()
-fx_m2_echo     = fx.LocalEchoEffect()
-fx_m2_tblur    = fx.LocalTemporalBlurEffect()
-fx_m2_roi      = fx.ROIEffect()
 
 # --- Post Finishing Layers ---
 fx_post_bright   = fx.BrightnessEffect()
@@ -271,7 +244,7 @@ fx_post_analog   = fx.AnalogSyncGlitchEffect()
 # =====================================================================
 
 # --- MASTER STAGE 1: BASIC CHANNEL 1 ---
-stage_channel_1 = PipelineStage("Channel 1: Basic Alpha", standard_linear_processor)
+stage_channel_1 = PipelineStage("Channel 1: Basic", standard_linear_processor)
 stage_channel_1.add_layers([
     fx_b1_thresh, 
     fx_b1_bright, fx_b1_contrast, fx_b1_sat, 
@@ -280,19 +253,9 @@ stage_channel_1.add_layers([
     fx_b1_roi
 ])
 
-# --- MASTER STAGE 2: BASIC CHANNEL 2 ---
-stage_channel_2 = PipelineStage("Channel 2: Basic Beta", standard_linear_processor)
+# --- MASTER STAGE 2: MONOCHROME CHANNEL 1 ---
+stage_channel_2 = PipelineStage("Channel 2: Mono", standard_linear_processor)
 stage_channel_2.add_layers([
-    fx_b2_thresh, 
-    fx_b2_bright, fx_b2_contrast, fx_b2_sat, 
-    fx_b2_temp, fx_b2_cshift, fx_b2_add, fx_b2_invert,
-    fx_b2_echo, fx_b2_tblur,
-    fx_b2_roi
-])
-
-# --- MASTER STAGE 3: MONOCHROME CHANNEL 1 ---
-stage_channel_3 = PipelineStage("Channel 3: Mono Glitch Alpha", standard_linear_processor)
-stage_channel_3.add_layers([
     fx_m1_thresh, fx_m1_edges, 
     fx_m1_mono, fx_m1_invert,
     fx_m1_bright, fx_m1_contrast,
@@ -300,18 +263,6 @@ stage_channel_3.add_layers([
     fx_m1_echo, fx_m1_tblur, 
     fx_m1_cmap, fx_m1_roi
 ])
-
-# --- MASTER STAGE 4: MONOCHROME CHANNEL 2 ---
-stage_channel_4 = PipelineStage("Channel 4: Mono Glitch Beta", standard_linear_processor)
-stage_channel_4.add_layers([
-    fx_m2_thresh, fx_m2_edges, 
-    fx_m2_mono, fx_m2_invert,
-    fx_m2_bright, fx_m2_contrast,
-    fx_m2_blur, 
-    fx_m2_echo, fx_m2_tblur, 
-    fx_m2_cmap, fx_m2_roi
-])
-
 
 # =====================================================================
 # 3. CENTRAL AUDIO-STYLE MIXER DESK
@@ -324,21 +275,20 @@ master_mixer.set_inputs([
 
 # Define the master volumes (0-100%) directly on the stage parameters
 master_mixer.parameters = {
-    "volume_Channel 1: Basic": 100,
-    "volume_Channel 2: Mono": 0,
+    "Level Channel 1: Basic": 100,
+    "Level Channel 2: Mono": 0
 }
 
 # Provide the UI metadata so the slider generator knows the ranges
 master_mixer.parameters_metadata = {
-    "volume_Channel 1: Basic":       {"type": "int", "default": 100, "min": 0, "max": 100},
-    "volume_Channel 2: Mono":        {"type": "int", "default": 0,   "min": 0, "max": 100},
+    "Level Channel 1: Basic":       {"type": "int", "default": 100, "min": 0, "max": 100},
+    "Level Channel 2: Mono":        {"type": "int", "default": 0,   "min": 0, "max": 100}
 }
-
 
 # =====================================================================
 # 4. MASTER STAGE 5: POST-MIX FINISHING PATH
 # =====================================================================
-stage_post_finishing = PipelineStage("Channel 5: Post Finishing", standard_linear_processor)
+stage_post_finishing = PipelineStage("Finishing", standard_linear_processor)
 stage_post_finishing.set_inputs(["Master Mixer Desk"])
 stage_post_finishing.add_layers([
     fx_post_features, fx_post_analog
@@ -352,9 +302,7 @@ graph_manager = PipelineGraphRegistry()
 
 graph_manager.add_stage(stage_channel_1)
 graph_manager.add_stage(stage_channel_2)
-# graph_manager.add_stage(stage_channel_3)
-# graph_manager.add_stage(stage_channel_4)
 graph_manager.add_stage(master_mixer)
 graph_manager.add_stage(stage_post_finishing)
 
-graph_manager.set_output_node("Channel 5: Post Finishing")
+graph_manager.set_output_node("Finishing")

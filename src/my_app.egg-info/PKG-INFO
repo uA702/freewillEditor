@@ -6,3 +6,4 @@ Requires-Dist: numpy
 Requires-Dist: pyside6
 Requires-Dist: cmapy
 Requires-Dist: scipy
+Requires-Dist: moviepy

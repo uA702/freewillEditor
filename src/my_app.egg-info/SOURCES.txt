@@ -3,6 +3,7 @@ pyproject.toml
 src/app/__init__.py
 src/app/effects.py
 src/app/main.py
+src/app/media_io.py
 src/app/pipeline.py
 src/app/video_worker.py
 src/my_app.egg-info/PKG-INFO
