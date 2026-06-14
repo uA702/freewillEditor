@@ -318,26 +318,20 @@ stage_channel_4.add_layers([
 # =====================================================================
 master_mixer = PipelineStage("Master Mixer Desk", custom_multi_mixer_processor)
 master_mixer.set_inputs([
-    "Channel 1: Basic Alpha",
-    "Channel 2: Basic Beta",
-    "Channel 3: Mono Glitch Alpha",
-    "Channel 4: Mono Glitch Beta"
+    "Channel 1: Basic",
+    "Channel 2: Mono"
 ])
 
 # Define the master volumes (0-100%) directly on the stage parameters
 master_mixer.parameters = {
-    "volume_Channel 1: Basic Alpha": 100,
-    "volume_Channel 2: Basic Beta": 0,
-    "volume_Channel 3: Mono Glitch Alpha": 0,
-    "volume_Channel 4: Mono Glitch Beta": 0
+    "volume_Channel 1: Basic": 100,
+    "volume_Channel 2: Mono": 0,
 }
 
 # Provide the UI metadata so the slider generator knows the ranges
 master_mixer.parameters_metadata = {
-    "volume_Channel 1: Basic Alpha":       {"type": "int", "default": 100, "min": 0, "max": 100},
-    "volume_Channel 2: Basic Beta":        {"type": "int", "default": 0,   "min": 0, "max": 100},
-    "volume_Channel 3: Mono Glitch Alpha": {"type": "int", "default": 0,   "min": 0, "max": 100},
-    "volume_Channel 4: Mono Glitch Beta":  {"type": "int", "default": 0,   "min": 0, "max": 100}
+    "volume_Channel 1: Basic":       {"type": "int", "default": 100, "min": 0, "max": 100},
+    "volume_Channel 2: Mono":        {"type": "int", "default": 0,   "min": 0, "max": 100},
 }
 
 
@@ -358,8 +352,8 @@ graph_manager = PipelineGraphRegistry()
 
 graph_manager.add_stage(stage_channel_1)
 graph_manager.add_stage(stage_channel_2)
-graph_manager.add_stage(stage_channel_3)
-graph_manager.add_stage(stage_channel_4)
+# graph_manager.add_stage(stage_channel_3)
+# graph_manager.add_stage(stage_channel_4)
 graph_manager.add_stage(master_mixer)
 graph_manager.add_stage(stage_post_finishing)
 
