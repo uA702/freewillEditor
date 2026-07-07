@@ -200,6 +200,7 @@ def custom_multi_mixer_processor(node: PipelineStage, frame: np.ndarray, deps: D
 # 1. INITIALIZE MASTER EFFECT LAYERS (USING THE 'fx.' NAMESPACE)
 # =====================================================================
 # --- Channel 1 Layers ---
+fx_b1_noise    = fx.NoiseEffect()
 fx_b1_thresh   = fx.ThresholdingEffect()
 fx_b1_bright   = fx.BrightnessEffect()
 fx_b1_contrast = fx.ContrastEffect()
@@ -214,6 +215,7 @@ fx_b1_tblur    = fx.LocalTemporalBlurEffect()
 fx_b1_roi      = fx.ROIEffect()
 
 # --- Channel 2 Layers ---
+fx_m1_noise    = fx.NoiseEffect()
 fx_m1_thresh   = fx.ThresholdingEffect()
 fx_m1_edges    = fx.EdgeDetectionEffect()
 fx_m1_mono     = fx.MonochromeEffect()
@@ -245,7 +247,7 @@ fx_post_analog   = fx.AnalogSyncGlitchEffect()
 # --- MASTER STAGE 1: BASIC CHANNEL 1 ---
 stage_channel_1 = PipelineStage("Channel 1: Basic", standard_linear_processor)
 stage_channel_1.add_layers([
-    fx_b1_thresh, 
+    fx_b1_noise, fx_b1_thresh, 
     fx_b1_bright, fx_b1_contrast, fx_b1_sat, 
     fx_b1_temp, fx_b1_cshift, fx_b1_add, fx_b1_invert,
     fx_b1_blur, fx_b1_echo, fx_b1_tblur, 
@@ -255,7 +257,7 @@ stage_channel_1.add_layers([
 # --- MASTER STAGE 2: MONOCHROME CHANNEL 1 ---
 stage_channel_2 = PipelineStage("Channel 2: Mono", standard_linear_processor)
 stage_channel_2.add_layers([
-    fx_m1_thresh, fx_m1_edges, 
+    fx_m1_noise, fx_m1_thresh, fx_m1_edges, 
     fx_m1_mono, fx_m1_invert,
     fx_m1_bright, fx_m1_contrast,
     fx_m1_blur, 
@@ -272,17 +274,17 @@ master_mixer.set_inputs([
     "Channel 2: Mono"
 ])
 
-# Define the master volumes (0-100%) directly on the stage parameters
-master_mixer.parameters = {
-    "Level Channel 1: Basic": 100,
-    "Level Channel 2: Mono": 0
-}
+# # Define the master volumes (0-100%) directly on the stage parameters
+# master_mixer.parameters = {
+#     "Volume Channel 1: Basic": 100,
+#     "Volume Channel 2: Mono": 0
+# }
 
-# Provide the UI metadata so the slider generator knows the ranges
-master_mixer.parameters_metadata = {
-    "Level Channel 1: Basic":       {"type": "int", "default": 100, "min": 0, "max": 100},
-    "Level Channel 2: Mono":        {"type": "int", "default": 0,   "min": 0, "max": 100}
-}
+# # Provide the UI metadata so the slider generator knows the ranges
+# master_mixer.parameters_metadata = {
+#     "Volume Channel 1: Basic": {"type": "int", "default": 100, "min": 0, "max": 100},
+#     "Volume Channel 2: Mono":  {"type": "int", "default": 0,   "min": 0, "max": 100}
+# }
 
 # =====================================================================
 # 4. MASTER STAGE 5: POST-MIX FINISHING PATH
@@ -290,9 +292,9 @@ master_mixer.parameters_metadata = {
 stage_post_finishing = PipelineStage("Finishing", standard_linear_processor)
 stage_post_finishing.set_inputs(["Master Mixer Desk"])
 stage_post_finishing.add_layers([
-    fx_post_features, fx_post_analog
+    fx_post_features,
+    fx_post_analog
 ])
-
 
 # =====================================================================
 # 5. REGISTER TO GRAPH MANAGEMENT ENGINE
