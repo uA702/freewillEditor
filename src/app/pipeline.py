@@ -238,7 +238,6 @@ fx_post_tblur    = fx.LocalTemporalBlurEffect()
 fx_post_features = fx.FeatureTracker()
 fx_post_analog   = fx.AnalogSyncGlitchEffect()
 
-
 # =====================================================================
 # 2. ASSEMBLE ALL-IN-ONE MASTER PLUGINS
 # =====================================================================

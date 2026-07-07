@@ -928,3 +928,73 @@ class LocalTemporalBlurEffect(BaseEffect):
             
         cv2.accumulateWeighted(frame, self.accumulator, alpha)
         return cv2.convertScaleAbs(self.accumulator)
+    
+class NoiseEffect(BaseEffect):
+    def __init__(self):
+        super().__init__()
+        self.parameters = {
+            "enabled": False,
+            "intensity": 25,
+            "noise_type": "Gaussian",
+            "monochromatic": True
+        }
+        self.parameters_metadata = {
+            "enabled": {"type": "bool", "default": False},
+            "intensity": {"type": "int", "default": 25, "min": 0, "max": 100},
+            "noise_type": {"type": "str_choice", "default": "Gaussian", "choices": ["Gaussian", "Salt & Pepper"]},
+            "monochromatic": {"type": "bool", "default": True}
+        }
+
+    def apply(self, frame: np.ndarray) -> np.ndarray:
+        if not self.parameters.get("enabled", False):
+            return frame
+            
+        intensity = self.parameters.get("intensity", 25)
+        if intensity == 0:
+            return frame
+
+        # Separate alpha channel safely if present
+        has_alpha = (frame.shape[2] == 4)
+        color_data = frame[:, :, :3] if has_alpha else frame
+        
+        h, w, c = color_data.shape
+        noise_type = self.parameters.get("noise_type", "Gaussian")
+        is_mono = self.parameters.get("monochromatic", True)
+
+        if noise_type == "Gaussian":
+            # 1. Generate normal/Gaussian distributed math noise
+            noise_channels = 1 if is_mono else c
+            raw_noise = np.random.normal(0, intensity, (h, w, noise_channels)).astype(np.float32)
+            
+            # If monochromatic, broadcast the single noise layer across all BGR channels
+            if is_mono:
+                raw_noise = np.repeat(raw_noise, c, axis=2)
+
+            # 2. Add noise to the image frame and clamp safely between 0-255 bounds
+            # Note: If your system global chaos switch `self.clipping_disabled` is True, 
+            # we can skip native clamping to let integer rollover artifacts generate!
+            if getattr(self, "clipping_disabled", False):
+                processed_color = (color_data.astype(np.float32) + raw_noise).astype(np.uint8)
+            else:
+                processed_color = np.clip(color_data.astype(np.float32) + raw_noise, 0, 255).astype(np.uint8)
+
+        elif noise_type == "Salt & Pepper":
+            # Calculate a scaling factor for how many pixels get corrupted
+            prob = intensity / 400.0  # Normalized map so 100 doesn't completely wipe out the frame
+            processed_color = color_data.copy()
+            
+            if is_mono:
+                # White speckles (Salt) and Black speckles (Pepper) uniformly applied across channels
+                random_matrix = np.random.rand(h, w)
+                processed_color[random_matrix < prob] = 0       # Pepper
+                processed_color[random_matrix > (1 - prob)] = 255 # Salt
+            else:
+                # Independent colorful structural channel corruption
+                random_matrix = np.random.rand(h, w, c)
+                processed_color[random_matrix < prob] = 0
+                processed_color[random_matrix > (1 - prob)] = 255
+
+        # Recombine original alpha transparency layout map if it was dropped
+        if has_alpha:
+            return np.concatenate([processed_color, frame[:, :, 3:]], axis=2)
+        return processed_color
