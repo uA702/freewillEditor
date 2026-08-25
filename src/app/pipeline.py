@@ -267,7 +267,7 @@ fx_m1_echo     = fx.LocalEchoEffect()
 fx_m1_tblur    = fx.LocalTemporalBlurEffect() 
 fx_m1_roi      = fx.ROIEffect()
 
-# --- Post finishing Layers ---
+# --- Post Finishing Layers ---
 fx_post_bright   = fx.BrightnessEffect()
 fx_post_contrast = fx.ContrastEffect()
 fx_post_sat      = fx.SaturationEffect()
@@ -309,21 +309,9 @@ stage_channel_2.add_layers([
 # =====================================================================
 master_mixer = PipelineStage("master_mixer_desk", custom_multi_mixer_processor)
 master_mixer.set_inputs([
-    "volume_1:basic",
-    "volume_2:mono"
+    "channel_1:basic",
+    "channel_2:mono"
 ])
-
-# # Define the master volumes (0-100%) directly on the stage parameters
-# master_mixer.parameters = {
-#     "Volume channel_1:basic": 100,
-#     "Volume channel_2:mono": 0
-# }
-
-# # Provide the UI metadata so the slider generator knows the ranges
-# master_mixer.parameters_metadata = {
-#     "Volume channel_1:basic": {"type": "int", "default": 100, "min": 0, "max": 100},
-#     "Volume channel_2:mono":  {"type": "int", "default": 0,   "min": 0, "max": 100}
-# }
 
 # =====================================================================
 # 4. MASTER STAGE 5: POST-MIX FINISHING PATH
