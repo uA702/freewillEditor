@@ -205,7 +205,7 @@ class VideoEditorApp(QMainWindow):
         lbl_stage.setStyleSheet("color: #00C000; font-weight: bold; margin-top: 12px; font-size: 11pt;")
         self.sliders_layout.addWidget(lbl_stage)
 
-        # --- PART A: Selected Node Properties (e.g., Mixer Master Faders) ---
+        # --- PART A: Selected Node Properties (e.g., Mixer Master Faders & Blend Modes) ---
         if stage.parameters_metadata:
             for param, meta in stage.parameters_metadata.items():
                 if meta.get("type") == "int":
@@ -243,10 +243,20 @@ class VideoEditorApp(QMainWindow):
                     self.sliders_layout.addWidget(row_widget)
                     
                 elif meta.get("type") == "bool":
-                    checkbox = QCheckBox(f"   [Node Property] Enable {param}")
+                    checkbox = QCheckBox(f"   [Node Property] {param}")
                     checkbox.setChecked(stage.parameters[param])
                     checkbox.stateChanged.connect(lambda state, s=stage, p=param: s.set_parameter(p, state == 2))
                     self.sliders_layout.addWidget(checkbox)
+
+                # --- ADDED: Handle dropdown choices on Stage level parameters ---
+                elif meta.get("type") == "str_choice":
+                    self.sliders_layout.addWidget(QLabel(f"   [Node Property] {param}:"))
+                    dropdown = QComboBox()
+                    dropdown.addItems(meta.get("choices", []))
+                    dropdown.setCurrentText(str(stage.parameters[param]))
+                    dropdown.setStyleSheet("background-color: #222; color: #FFF; border: 1px solid #444; padding: 4px; border-radius: 3px;")
+                    dropdown.currentTextChanged.connect(lambda text, s=stage, p=param: s.set_parameter(p, text))
+                    self.sliders_layout.addWidget(dropdown)
 
         # --- PART B: Selected Stage Child Filter Layers ---
         for layer in stage.layers:
@@ -309,7 +319,7 @@ class VideoEditorApp(QMainWindow):
                     self.sliders_layout.addWidget(QLabel(f"      {param}:"))
                     dropdown = QComboBox()
                     dropdown.addItems(meta.get("choices", []))
-                    dropdown.setCurrentText(layer.parameters[param])
+                    dropdown.setCurrentText(str(layer.parameters[param]))
                     dropdown.setStyleSheet("background-color: #222; color: #FFF; border: 1px solid #444; padding: 4px; border-radius: 3px;")
                     dropdown.currentTextChanged.connect(lambda text, l=layer, p=param: l.set_parameter(p, text))
                     self.sliders_layout.addWidget(dropdown)
